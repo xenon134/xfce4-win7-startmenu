@@ -93,6 +93,9 @@ public:
 
 private:
 	GtkWidget* get_active_category_button();
+	void build_app_list();
+	void open_user_directory(GUserDirectory directory, const gchar* fallback_name);
+	void add_strip_button(GtkWidget* button);
 	gboolean on_key_press_event(GtkWidget* widget, GdkEventKey* key_event);
 	gboolean on_key_press_event_after(GtkWidget* widget, GdkEventKey* key_event);
 	gboolean on_map_event();
@@ -140,6 +143,10 @@ private:
 	gulong m_command_slots[9];
 
 	GtkEntry* m_search_entry;
+
+	GtkBox* m_sidebar_strip;
+	GtkScrolledWindow* m_apps_scroll;
+	GtkListBox* m_apps_list;
 
 	SearchPage* m_search_results;
 	FavoritesPage* m_favorites;

@@ -589,16 +589,17 @@ GtkWidget* SettingsDialog::init_general_tab()
 	gtk_widget_set_halign(label, GTK_ALIGN_START);
 	gtk_grid_attach(page, label, 0, 9, 1, 1);
 
-	m_background_opacity = gtk_scale_new_with_range(GTK_ORIENTATION_HORIZONTAL, 0.0, 100.0, 1.0);
+	m_background_opacity = gtk_scale_new_with_range(GTK_ORIENTATION_HORIZONTAL, 0.0, 1.0, 0.01);
 	gtk_widget_set_hexpand(GTK_WIDGET(m_background_opacity), true);
 	gtk_grid_attach(page, m_background_opacity, 1, 9, 1, 1);
 	gtk_scale_set_value_pos(GTK_SCALE(m_background_opacity), GTK_POS_RIGHT);
-	gtk_range_set_value(GTK_RANGE(m_background_opacity), wm_settings->menu_opacity);
+	gtk_scale_set_digits(GTK_SCALE(m_background_opacity), 2);
+	gtk_range_set_value(GTK_RANGE(m_background_opacity), wm_settings->background_alpha);
 
 	connect(m_background_opacity, "value-changed",
 		[](GtkRange* range)
 		{
-			wm_settings->menu_opacity = gtk_range_get_value(range);
+			wm_settings->background_alpha = gtk_range_get_value(range);
 		});
 
 	GdkScreen* screen = gtk_widget_get_screen(m_window);

@@ -21,6 +21,7 @@
 #include "category-button.h"
 #include "command.h"
 #include "favorites-page.h"
+#include "launcher.h"
 #include "launcher-view.h"
 #include "plugin.h"
 #include "profile.h"
@@ -32,6 +33,8 @@
 
 #include <libxfce4ui/libxfce4ui.h>
 #include <gdk/gdkkeysyms.h>
+
+#include <glib/gi18n-lib.h>
 
 #ifdef HAVE_GTK_LAYER_SHELL
 #include <gtk-layer-shell.h>
@@ -47,6 +50,9 @@ WhiskerMenu::Window::Window(Plugin* plugin) :
 	m_plugin(plugin),
 	m_window(nullptr),
 	m_position(PositionAtButton),
+	m_sidebar_strip(nullptr),
+	m_apps_scroll(nullptr),
+	m_apps_list(nullptr),
 	m_sidebar_size_group(nullptr),
 	m_geometry{0,0,1,1},
 	m_layout_ltr(true),
@@ -162,7 +168,7 @@ WhiskerMenu::Window::Window(Plugin* plugin) :
 
 	// Create the border of the window
 	GtkWidget* frame = gtk_frame_new(nullptr);
-	gtk_frame_set_shadow_type(GTK_FRAME(frame), GTK_SHADOW_OUT);
+	gtk_frame_set_shadow_type(GTK_FRAME(frame), GTK_SHADOW_NONE);
 	gtk_container_add(GTK_CONTAINER(m_window), frame);
 
 	// Create window contents stack
@@ -201,7 +207,6 @@ WhiskerMenu::Window::Window(Plugin* plugin) :
 
 	// Create search entry
 	m_search_entry = GTK_ENTRY(gtk_search_entry_new());
-	gtk_window_set_focus(m_window, GTK_WIDGET(m_search_entry));
 
 	connect(m_search_entry, "changed",
 		[this](GtkEditable*)
@@ -302,20 +307,56 @@ WhiskerMenu::Window::Window(Plugin* plugin) :
 	gtk_stack_add_named(m_contents_stack, GTK_WIDGET(search_results), "search");
 	gtk_box_pack_start(m_vbox, GTK_WIDGET(m_contents_stack), true, true, 0);
 
-	// Create box for packing categories horizontally
+	// Create the Aero-style three-column layout:
+	// [icon strip 77px][all applications 409px][pinned favorites]
+	gtk_grid_set_column_spacing(m_contents_box, 0);
+
+	m_sidebar_strip = GTK_BOX(gtk_box_new(GTK_ORIENTATION_VERTICAL, 6));
+	gtk_widget_set_size_request(GTK_WIDGET(m_sidebar_strip), 77, -1);
+	gtk_widget_set_vexpand(GTK_WIDGET(m_sidebar_strip), true);
+	gtk_style_context_add_class(gtk_widget_get_style_context(GTK_WIDGET(m_sidebar_strip)), "whiskermenu-strip");
+	gtk_grid_attach(m_contents_box, GTK_WIDGET(m_sidebar_strip), 0, 1, 1, 1);
+
+	m_apps_scroll = GTK_SCROLLED_WINDOW(gtk_scrolled_window_new(nullptr, nullptr));
+	gtk_widget_set_size_request(GTK_WIDGET(m_apps_scroll), 409, -1);
+	gtk_widget_set_hexpand(GTK_WIDGET(m_apps_scroll), false);
+	gtk_widget_set_vexpand(GTK_WIDGET(m_apps_scroll), true);
+	gtk_scrolled_window_set_propagate_natural_width(m_apps_scroll, false);
+	gtk_scrolled_window_set_policy(m_apps_scroll, GTK_POLICY_NEVER, GTK_POLICY_AUTOMATIC);
+	gtk_scrolled_window_set_shadow_type(m_apps_scroll, GTK_SHADOW_NONE);
+	gtk_style_context_add_class(gtk_widget_get_style_context(GTK_WIDGET(m_apps_scroll)), "whiskermenu-apps");
+	m_apps_list = GTK_LIST_BOX(gtk_list_box_new());
+	gtk_list_box_set_selection_mode(m_apps_list, GTK_SELECTION_BROWSE);
+	gtk_list_box_set_activate_on_single_click(m_apps_list, true);
+	gtk_container_add(GTK_CONTAINER(m_apps_scroll), GTK_WIDGET(m_apps_list));
+	gtk_grid_attach(m_contents_box, GTK_WIDGET(m_apps_scroll), 1, 1, 1, 1);
+	connect(m_apps_list, "row-activated",
+		[this](GtkListBox*, GtkListBoxRow* row)
+		{
+			Launcher* launcher = static_cast<Launcher*>(g_object_get_data(G_OBJECT(row), "launcher"));
+			if (!launcher)
+			{
+				return;
+			}
+			m_recent->add(launcher);
+			hide();
+			launcher->run(gtk_widget_get_screen(GTK_WIDGET(m_window)));
+		});
+
+	// Create box for packing categories horizontally (kept for compatibility, hidden)
 	m_categories_box = GTK_BOX(gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0));
 	gtk_grid_attach(m_contents_box, GTK_WIDGET(m_categories_box), 0, 0, 2, 1);
 
-	// Create box for packing launcher pages
+	// Create box for packing launcher pages; the pinned favorites fill the right column
 	m_panels_stack = GTK_STACK(gtk_stack_new());
-	gtk_grid_attach(m_contents_box, GTK_WIDGET(m_panels_stack), 0, 1, 1, 1);
+	gtk_grid_attach(m_contents_box, GTK_WIDGET(m_panels_stack), 2, 1, 1, 1);
 	gtk_widget_set_hexpand(GTK_WIDGET(m_panels_stack), true);
 	gtk_widget_set_vexpand(GTK_WIDGET(m_panels_stack), true);
 	gtk_stack_add_named(m_panels_stack, m_favorites->get_widget(), "favorites");
 	gtk_stack_add_named(m_panels_stack, m_recent->get_widget(), "recent");
 	gtk_stack_add_named(m_panels_stack, m_applications->get_widget(), "applications");
 
-	// Create box for packing sidebar
+	// Create box for packing sidebar (kept for compatibility, hidden)
 	m_category_buttons = GTK_BOX(gtk_box_new(GTK_ORIENTATION_VERTICAL, 0));
 	gtk_box_pack_start(m_category_buttons, favorites_button->get_widget(), false, false, 0);
 	gtk_box_pack_start(m_category_buttons, recent_button->get_widget(), false, false, 0);
@@ -323,11 +364,56 @@ WhiskerMenu::Window::Window(Plugin* plugin) :
 	gtk_box_pack_start(m_category_buttons, gtk_separator_new(GTK_ORIENTATION_HORIZONTAL), false, false, 4);
 
 	m_sidebar = GTK_SCROLLED_WINDOW(gtk_scrolled_window_new(nullptr, nullptr));
-	gtk_grid_attach(m_contents_box, GTK_WIDGET(m_sidebar), 1, 1, 1, 1);
+	gtk_grid_attach(m_contents_box, GTK_WIDGET(m_sidebar), 3, 1, 1, 1);
 	gtk_scrolled_window_set_propagate_natural_height(m_sidebar, true);
 	gtk_scrolled_window_set_shadow_type(m_sidebar, GTK_SHADOW_NONE);
 	gtk_scrolled_window_set_policy(m_sidebar, GTK_POLICY_NEVER, GTK_POLICY_AUTOMATIC);
 	gtk_container_add(GTK_CONTAINER(m_sidebar), GTK_WIDGET(m_category_buttons));
+
+	// Build the left icon strip. The buttons sit at the bottom, like the reference.
+	gtk_box_pack_start(m_sidebar_strip, gtk_label_new(nullptr), true, true, 0);
+
+	auto add_folder_button = [this](GUserDirectory directory, const gchar* icon, const gchar* tooltip, const gchar* fallback)
+	{
+		GtkWidget* button = gtk_button_new();
+		gtk_button_set_relief(GTK_BUTTON(button), GTK_RELIEF_NONE);
+		gtk_widget_set_tooltip_text(button, tooltip);
+		gtk_container_add(GTK_CONTAINER(button),
+			gtk_image_new_from_icon_name(icon, GTK_ICON_SIZE_LARGE_TOOLBAR));
+		add_strip_button(button);
+		gtk_box_pack_start(m_sidebar_strip, button, false, false, 0);
+		connect(button, "clicked",
+			[this, directory, fallback](GtkButton*)
+			{
+				open_user_directory(directory, fallback);
+			});
+	};
+	add_folder_button(G_USER_DIRECTORY_VIDEOS, "folder-videos", _("Videos"), "Videos");
+	add_folder_button(G_USER_DIRECTORY_MUSIC, "folder-music", _("Music"), "Music");
+	add_folder_button(G_USER_DIRECTORY_DOCUMENTS, "folder-documents", _("Documents"), "Documents");
+
+	GtkWidget* settings_button = m_commands_button[Settings::CommandSettings];
+	gtk_container_remove(GTK_CONTAINER(m_commands_box), settings_button);
+	add_strip_button(settings_button);
+	gtk_box_pack_start(m_sidebar_strip, settings_button, false, false, 0);
+
+	GtkWidget* power_button = m_commands_button[Settings::CommandLogOut];
+	gtk_container_remove(GTK_CONTAINER(m_commands_box), power_button);
+	add_strip_button(power_button);
+	gtk_box_pack_start(m_sidebar_strip, power_button, false, false, 0);
+
+	// The old title bar, search box, category sidebar and category row are not part of the layout.
+	gtk_widget_set_no_show_all(GTK_WIDGET(m_title_box), true);
+	gtk_widget_set_visible(GTK_WIDGET(m_title_box), false);
+	gtk_widget_set_no_show_all(GTK_WIDGET(m_search_box), true);
+	gtk_widget_set_visible(GTK_WIDGET(m_search_box), false);
+	gtk_widget_set_no_show_all(GTK_WIDGET(m_categories_box), true);
+	gtk_widget_set_visible(GTK_WIDGET(m_categories_box), false);
+	gtk_widget_set_no_show_all(GTK_WIDGET(m_sidebar), true);
+	gtk_widget_set_visible(GTK_WIDGET(m_sidebar), false);
+
+	// Make the pinned favorites use the full right column without a theme border.
+	gtk_scrolled_window_set_shadow_type(GTK_SCROLLED_WINDOW(m_favorites->get_widget()), GTK_SHADOW_NONE);
 
 	// Handle default page
 	reset_default_button();
@@ -342,6 +428,79 @@ WhiskerMenu::Window::Window(Plugin* plugin) :
 	GtkStyleContext* context = gtk_widget_get_style_context(GTK_WIDGET(m_category_buttons));
 	gtk_style_context_add_class(context, "categories");
 	gtk_style_context_add_class(context, "right");
+
+	// Draw the translucent background ourselves; keep theme containers out of the way.
+	GtkCssProvider* css_provider = gtk_css_provider_new();
+	gtk_css_provider_load_from_data(css_provider,
+		"#whiskermenu-window {"
+		"  background-color: transparent;"
+		"  border-radius: 0;"
+		"}"
+		"#whiskermenu-window frame {"
+		"  background-color: transparent;"
+		"  background-image: none;"
+		"  border-style: none;"
+		"  border-width: 0;"
+		"  border-radius: 0;"
+		"  box-shadow: none;"
+		"  padding: 0;"
+		"}"
+		"#whiskermenu-window stack,"
+		"#whiskermenu-window grid,"
+		"#whiskermenu-window box {"
+		"  background-color: transparent;"
+		"}"
+		"#whiskermenu-window scrolledwindow,"
+		"#whiskermenu-window viewport,"
+		"#whiskermenu-window list,"
+		"#whiskermenu-window iconview,"
+		"#whiskermenu-window treeview,"
+		"#whiskermenu-window .launchers-pane {"
+		"  background-color: transparent;"
+		"  background-image: none;"
+		"  border-style: none;"
+		"  box-shadow: none;"
+		"}"
+		"#whiskermenu-window .whiskermenu-apps row {"
+		"  background-color: transparent;"
+		"  border-radius: 4px;"
+		"}"
+		"#whiskermenu-window .whiskermenu-apps row:hover {"
+		"  background-color: rgba(255,255,255,0.10);"
+		"}"
+		"#whiskermenu-window .whiskermenu-apps row:selected {"
+		"  background-color: rgba(255,255,255,0.16);"
+		"}"
+		"#whiskermenu-window label,"
+		"#whiskermenu-window iconview,"
+		"#whiskermenu-window treeview,"
+		"#whiskermenu-window .whiskermenu-apps row {"
+		"  color: #ffffff;"
+		"}"
+		"#whiskermenu-window .whiskermenu-apps .app-section {"
+		"  color: #ffffff;"
+		"  font-weight: bold;"
+		"  font-size: 14px;"
+		"  opacity: 1.0;"
+		"}"
+		"#whiskermenu-window .whiskermenu-strip button {"
+		"  background-color: transparent;"
+		"  background-image: none;"
+		"  border-style: none;"
+		"  box-shadow: none;"
+		"  padding: 0;"
+		"  border-radius: 4px;"
+		"}"
+		"#whiskermenu-window .whiskermenu-strip button:hover {"
+		"  background-color: rgba(255,255,255,0.12);"
+		"}"
+		"#whiskermenu-window .whiskermenu-strip button:active {"
+		"  background-color: rgba(255,255,255,0.20);"
+		"}",
+		-1, nullptr);
+	gtk_style_context_add_provider_for_screen(gtk_widget_get_screen(GTK_WIDGET(m_window)),
+			GTK_STYLE_PROVIDER(css_provider), GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
+	g_object_unref(css_provider);
 
 	// Show widgets
 	gtk_widget_show_all(frame);
@@ -376,7 +535,11 @@ WhiskerMenu::Window::~Window()
 	for (int i = 0; i < 9; ++i)
 	{
 		g_signal_handler_disconnect(m_commands_button[i], m_command_slots[i]);
-		gtk_container_remove(GTK_CONTAINER(m_commands_box), m_commands_button[i]);
+		GtkWidget* parent = gtk_widget_get_parent(m_commands_button[i]);
+		if (parent == GTK_WIDGET(m_commands_box) || parent == GTK_WIDGET(m_sidebar_strip))
+		{
+			gtk_container_remove(GTK_CONTAINER(parent), m_commands_button[i]);
+		}
 	}
 
 	delete m_applications;
@@ -421,21 +584,136 @@ Page* WhiskerMenu::Window::get_active_page()
 
 //-----------------------------------------------------------------------------
 
+void WhiskerMenu::Window::build_app_list()
+{
+	if (!m_apps_list)
+	{
+		return;
+	}
+
+	// Remove old rows
+	GList* rows = gtk_container_get_children(GTK_CONTAINER(m_apps_list));
+	g_list_free_full(rows, (GDestroyNotify)gtk_widget_destroy);
+
+	// Add applications grouped by their first letter
+	gunichar last_group = 0;
+	for (Launcher* launcher : m_applications->find_all())
+	{
+		const gchar* name = launcher->get_text();
+		if (!name || !*name)
+		{
+			continue;
+		}
+
+		const gunichar first = g_utf8_get_char(name);
+		gunichar group = g_unichar_toupper(first);
+		if (!g_unichar_isalpha(group))
+		{
+			group = '#';
+		}
+
+		if (group != last_group)
+		{
+			last_group = group;
+
+			gchar letter[8] = {0};
+			const gint length = g_unichar_to_utf8(group, letter);
+			letter[length] = 0;
+
+			GtkWidget* row = gtk_list_box_row_new();
+			GtkWidget* label = gtk_label_new(letter);
+			gtk_label_set_xalign(GTK_LABEL(label), 0.0f);
+			gtk_widget_set_margin_start(label, 16);
+			gtk_widget_set_margin_end(label, 12);
+			gtk_widget_set_margin_top(label, 14);
+			gtk_widget_set_margin_bottom(label, 4);
+			gtk_style_context_add_class(gtk_widget_get_style_context(label), "app-section");
+			gtk_container_add(GTK_CONTAINER(row), label);
+			gtk_list_box_row_set_selectable(GTK_LIST_BOX_ROW(row), false);
+			gtk_list_box_row_set_activatable(GTK_LIST_BOX_ROW(row), false);
+			gtk_list_box_insert(m_apps_list, row, -1);
+		}
+
+		GtkWidget* row = gtk_list_box_row_new();
+		GtkWidget* box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 12);
+		gtk_widget_set_margin_start(box, 16);
+		gtk_widget_set_margin_end(box, 12);
+		gtk_widget_set_margin_top(box, 4);
+		gtk_widget_set_margin_bottom(box, 4);
+
+		GIcon* icon = launcher->get_icon();
+		GtkWidget* image = icon
+				? gtk_image_new_from_gicon(icon, GTK_ICON_SIZE_DND)
+				: gtk_image_new_from_icon_name("application-x-executable", GTK_ICON_SIZE_DND);
+		gtk_image_set_pixel_size(GTK_IMAGE(image), 32);
+		gtk_widget_set_valign(image, GTK_ALIGN_CENTER);
+
+		GtkWidget* label = gtk_label_new(name);
+		gtk_label_set_xalign(GTK_LABEL(label), 0.0f);
+		gtk_label_set_ellipsize(GTK_LABEL(label), PANGO_ELLIPSIZE_END);
+		gtk_widget_set_hexpand(label, true);
+
+		gtk_box_pack_start(GTK_BOX(box), image, false, false, 0);
+		gtk_box_pack_start(GTK_BOX(box), label, true, true, 0);
+		gtk_container_add(GTK_CONTAINER(row), box);
+		gtk_widget_set_tooltip_markup(row, launcher->get_tooltip());
+		g_object_set_data(G_OBJECT(row), "launcher", launcher);
+		gtk_list_box_insert(m_apps_list, row, -1);
+	}
+
+	gtk_widget_show_all(GTK_WIDGET(m_apps_list));
+
+	GtkAdjustment* adjustment = gtk_scrolled_window_get_vadjustment(m_apps_scroll);
+	gtk_adjustment_set_value(adjustment, gtk_adjustment_get_lower(adjustment));
+}
+
+//-----------------------------------------------------------------------------
+
+void WhiskerMenu::Window::open_user_directory(GUserDirectory directory, const gchar* fallback_name)
+{
+	const gchar* path = g_get_user_special_dir(directory);
+	gchar* fallback = nullptr;
+	if (!path || !*path)
+	{
+		fallback = g_build_filename(g_get_home_dir(), fallback_name, nullptr);
+		path = fallback;
+	}
+
+	gchar* uri = g_filename_to_uri(path, nullptr, nullptr);
+	hide();
+	if (uri)
+	{
+		GError* error = nullptr;
+		if (!gtk_show_uri_on_window(m_window, uri, GDK_CURRENT_TIME, &error))
+		{
+			g_warning("Failed to open %s: %s", path, error ? error->message : "unknown error");
+			if (error)
+			{
+				g_error_free(error);
+			}
+		}
+		g_free(uri);
+	}
+	g_free(fallback);
+}
+
+//-----------------------------------------------------------------------------
+
+void WhiskerMenu::Window::add_strip_button(GtkWidget* button)
+{
+	gtk_widget_set_halign(button, GTK_ALIGN_CENTER);
+	gtk_widget_set_valign(button, GTK_ALIGN_CENTER);
+	gtk_widget_set_size_request(button, 48, 48);
+	gtk_style_context_add_class(gtk_widget_get_style_context(button), "strip-button");
+}
+
+//-----------------------------------------------------------------------------
+
 void WhiskerMenu::Window::hide(bool lost_focus)
 {
 	// Save settings
 	wm_settings->favorites.save();
 	wm_settings->recent.save();
-
-	// Scroll categories to top
-	GtkAdjustment* adjustment = gtk_scrolled_window_get_vadjustment(m_sidebar);
-	gtk_adjustment_set_value(adjustment, gtk_adjustment_get_lower(adjustment));
-
-	// Hide command buttons to remove active border
-	for (auto command : m_commands_button)
-	{
-		gtk_widget_set_visible(command, false);
-	}
 
 	// Hide window
 	gtk_widget_hide(GTK_WIDGET(m_window));
@@ -724,14 +1002,12 @@ void WhiskerMenu::Window::set_loaded()
 	gtk_spinner_stop(m_window_load_spinner);
 	gtk_stack_set_visible_child_name(m_window_stack, "contents");
 
-	// Focus search entry
-	gtk_widget_grab_focus(GTK_WIDGET(m_search_entry));
+	// Build the letter-grouped application list
+	build_app_list();
+	gtk_widget_grab_focus(GTK_WIDGET(m_apps_list));
 
 	// Show panel button
 	m_plugin->set_loaded(true);
-
-	// Check in case of plugin reload
-	check_scrollbar_needed();
 }
 
 //-----------------------------------------------------------------------------
@@ -741,6 +1017,13 @@ void WhiskerMenu::Window::unset_items()
 	m_search_results->unset_menu_items();
 	m_favorites->unset_menu_items();
 	m_recent->unset_menu_items();
+
+	// Drop rows that point at launchers which are about to be reloaded.
+	if (m_apps_list)
+	{
+		GList* rows = gtk_container_get_children(GTK_CONTAINER(m_apps_list));
+		g_list_free_full(rows, (GDestroyNotify)gtk_widget_destroy);
+	}
 }
 
 //-----------------------------------------------------------------------------
@@ -780,92 +1063,11 @@ gboolean WhiskerMenu::Window::on_key_press_event(GtkWidget* widget, GdkEventKey*
 			set_size(wm_settings->menu_width, wm_settings->menu_height);
 			resize_end();
 		}
-		// Hide if escape is pressed and there is no text in search entry
-		else if (xfce_str_is_empty(gtk_entry_get_text(m_search_entry)))
+		else
 		{
 			hide();
 		}
-		// Clear search entry of text if escape is pressed
-		else
-		{
-			gtk_entry_set_text(m_search_entry, "");
-		}
 		return GDK_EVENT_STOP;
-	}
-
-	Page* page = get_active_page();
-	GtkWidget* view = page->get_view()->get_widget();
-	GtkWidget* search = GTK_WIDGET(m_search_entry);
-
-	switch (key_event->keyval)
-	{
-	case GDK_KEY_Left:
-	case GDK_KEY_KP_Left:
-	case GDK_KEY_Right:
-	case GDK_KEY_KP_Right:
-		// Allow keyboard navigation out of treeview
-		if (GTK_IS_TREE_VIEW(view) && ((widget == view) || (gtk_window_get_focus(m_window) == view)))
-		{
-			gtk_widget_grab_focus(get_active_category_button());
-		}
-		// Allow keyboard navigation out of search into iconview
-		else if (GTK_IS_ICON_VIEW(view) && ((widget == search) || (gtk_window_get_focus(m_window) == search)))
-		{
-			const auto length = gtk_entry_get_text_length(m_search_entry);
-			const bool at_end = length && (gtk_editable_get_position(GTK_EDITABLE(m_search_entry)) == length);
-			const bool move_next = (gtk_widget_get_default_direction() != GTK_TEXT_DIR_RTL)
-					? (key_event->keyval == GDK_KEY_Right) : (key_event->keyval == GDK_KEY_Left);
-			if (at_end && move_next)
-			{
-				gtk_widget_grab_focus(view);
-			}
-		}
-		break;
-
-	// Make up and down keys scroll current list of applications from search
-	case GDK_KEY_Up:
-	case GDK_KEY_KP_Up:
-	case GDK_KEY_Down:
-	case GDK_KEY_KP_Down:
-	{
-		// Determine if there is a selected item
-		bool reset = page != m_search_results;
-		if (reset)
-		{
-			GtkTreePath* path = page->get_view()->get_selected_path();
-			if (path)
-			{
-				reset = false;
-				gtk_tree_path_free(path);
-			}
-		}
-		// Allow keyboard navigation out of search into view
-		if ((widget == search) || (gtk_window_get_focus(m_window) == search))
-		{
-			gtk_widget_grab_focus(view);
-		}
-		// Only select first item if there is no selected item
-		if ((gtk_window_get_focus(m_window) == view) && reset)
-		{
-			page->select_first();
-			return GDK_EVENT_STOP;
-		}
-		break;
-	}
-
-	// Pass PageUp and PageDown keys to current view
-	case GDK_KEY_Page_Up:
-	case GDK_KEY_KP_Page_Up:
-	case GDK_KEY_Page_Down:
-	case GDK_KEY_KP_Page_Down:
-		if ((widget == search) || (gtk_window_get_focus(m_window) == search))
-		{
-			gtk_widget_grab_focus(view);
-		}
-		break;
-
-	default:
-		break;
 	}
 
 	return GDK_EVENT_PROPAGATE;
@@ -873,20 +1075,9 @@ gboolean WhiskerMenu::Window::on_key_press_event(GtkWidget* widget, GdkEventKey*
 
 //-----------------------------------------------------------------------------
 
-gboolean WhiskerMenu::Window::on_key_press_event_after(GtkWidget* widget, GdkEventKey* key_event)
+gboolean WhiskerMenu::Window::on_key_press_event_after(GtkWidget*, GdkEventKey*)
 {
-	// Pass unhandled key presses to search entry
-	GtkWidget* search_entry = GTK_WIDGET(m_search_entry);
-	if ((widget != search_entry) && (gtk_window_get_focus(m_window) != search_entry))
-	{
-		if (key_event->is_modifier)
-		{
-			return GDK_EVENT_PROPAGATE;
-		}
-		gtk_entry_grab_focus_without_selecting(m_search_entry);
-		gtk_window_propagate_key_event(m_window, key_event);
-		return GDK_EVENT_STOP;
-	}
+	// There is no search entry in the three-column layout; let the focused widget handle keys.
 	return GDK_EVENT_PROPAGATE;
 }
 
@@ -916,7 +1107,7 @@ void WhiskerMenu::Window::on_screen_changed(GtkWidget* widget)
 {
 	GdkScreen* screen = gtk_widget_get_screen(widget);
 	GdkVisual* visual = gdk_screen_get_rgba_visual(screen);
-	if (!visual || (wm_settings->menu_opacity == 100))
+	if (!visual || (wm_settings->background_alpha >= 0.999))
 	{
 		visual = gdk_screen_get_system_visual(screen);
 		m_supports_alpha = false;
@@ -937,31 +1128,19 @@ gboolean WhiskerMenu::Window::on_draw_event(GtkWidget* widget, cairo_t* cr)
 		gtk_widget_realize(widget);
 	}
 
-	GtkStyleContext* context = gtk_widget_get_style_context(widget);
-	const double width = gtk_widget_get_allocated_width(widget);
-	const double height = gtk_widget_get_allocated_height(widget);
-
 	GdkScreen* screen = gtk_widget_get_screen(widget);
 	const bool enabled = gdk_screen_is_composited(screen);
 
+	cairo_set_operator(cr, CAIRO_OPERATOR_SOURCE);
 	if (enabled && m_supports_alpha)
 	{
-		cairo_surface_t* background = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, width, height);
-		cairo_t* cr_background = cairo_create(background);
-		cairo_set_operator(cr_background, CAIRO_OPERATOR_SOURCE);
-		gtk_render_background(context, cr_background, 0.0, 0.0, width, height);
-		cairo_destroy(cr_background);
-
-		cairo_set_source_surface(cr, background, 0.0, 0.0);
-		cairo_set_operator(cr, CAIRO_OPERATOR_SOURCE);
-		cairo_paint_with_alpha(cr, wm_settings->menu_opacity / 100.0);
-
-		cairo_surface_destroy(background);
+		cairo_set_source_rgba(cr, 0.0, 0.0, 0.0, wm_settings->background_alpha);
 	}
 	else
 	{
-		gtk_render_background(context, cr, 0.0, 0.0, width, height);
+		cairo_set_source_rgb(cr, 0.0, 0.0, 0.0);
 	}
+	cairo_paint(cr);
 
 	return GDK_EVENT_PROPAGATE;
 }
@@ -994,7 +1173,7 @@ void WhiskerMenu::Window::favorites_toggled()
 {
 	m_favorites->reset_selection();
 	gtk_stack_set_visible_child_name(m_panels_stack, "favorites");
-	gtk_widget_grab_focus(GTK_WIDGET(m_search_entry));
+	gtk_widget_grab_focus(GTK_WIDGET(m_apps_list));
 }
 
 //-----------------------------------------------------------------------------
@@ -1003,7 +1182,7 @@ void WhiskerMenu::Window::recent_toggled()
 {
 	m_recent->reset_selection();
 	gtk_stack_set_visible_child_name(m_panels_stack, "recent");
-	gtk_widget_grab_focus(GTK_WIDGET(m_search_entry));
+	gtk_widget_grab_focus(GTK_WIDGET(m_apps_list));
 }
 
 //-----------------------------------------------------------------------------
@@ -1012,7 +1191,7 @@ void WhiskerMenu::Window::category_toggled()
 {
 	m_applications->reset_selection();
 	gtk_stack_set_visible_child_name(m_panels_stack, "applications");
-	gtk_widget_grab_focus(GTK_WIDGET(m_search_entry));
+	gtk_widget_grab_focus(GTK_WIDGET(m_apps_list));
 }
 
 //-----------------------------------------------------------------------------
@@ -1067,317 +1246,39 @@ bool WhiskerMenu::Window::set_size(int width, int height)
 
 void WhiskerMenu::Window::reset_default_button()
 {
-	switch (wm_settings->default_category)
-	{
-	case Settings::CategoryRecent:
-		m_default_button = m_recent->get_button();
-		gtk_box_reorder_child(m_category_buttons, m_recent->get_button()->get_widget(), 0);
-		gtk_box_reorder_child(m_category_buttons, m_favorites->get_button()->get_widget(), 1);
-		gtk_box_reorder_child(m_category_buttons, m_applications->get_button()->get_widget(), 2);
-		break;
-
-	case Settings::CategoryAll:
-		m_default_button = m_applications->get_button();
-		gtk_box_reorder_child(m_category_buttons, m_applications->get_button()->get_widget(), 0);
-		gtk_box_reorder_child(m_category_buttons, m_favorites->get_button()->get_widget(), 1);
-		gtk_box_reorder_child(m_category_buttons, m_recent->get_button()->get_widget(), 2);
-		break;
-
-	default:
-		m_default_button = m_favorites->get_button();
-		gtk_box_reorder_child(m_category_buttons, m_favorites->get_button()->get_widget(), 0);
-		gtk_box_reorder_child(m_category_buttons, m_recent->get_button()->get_widget(), 1);
-		gtk_box_reorder_child(m_category_buttons, m_applications->get_button()->get_widget(), 2);
-		break;
-	}
+	// The right column always displays the pinned favorites.
+	m_default_button = m_favorites->get_button();
 }
 
 //-----------------------------------------------------------------------------
 
 void WhiskerMenu::Window::show_favorites()
 {
-	// Switch to favorites panel
-	m_favorites->get_button()->set_active(true);
-
-	// Clear search entry
-	gtk_entry_set_text(m_search_entry, "");
-	gtk_widget_grab_focus(GTK_WIDGET(m_search_entry));
+	gtk_stack_set_visible_child_name(m_panels_stack, "favorites");
 }
 
 //-----------------------------------------------------------------------------
 
 void WhiskerMenu::Window::show_default_page()
 {
-	// Switch to favorites panel
-	m_default_button->set_active(true);
-
-	// Clear search entry
-	gtk_entry_set_text(m_search_entry, "");
-	gtk_widget_grab_focus(GTK_WIDGET(m_search_entry));
+	if (m_default_button)
+	{
+		m_default_button->set_active(true);
+	}
+	gtk_stack_set_visible_child_name(m_panels_stack, "favorites");
+	gtk_widget_grab_focus(GTK_WIDGET(m_apps_list));
 }
 
 //-----------------------------------------------------------------------------
 
 void WhiskerMenu::Window::search()
 {
-	// Fetch search string
-	const gchar* text = gtk_entry_get_text(m_search_entry);
-	if (xfce_str_is_empty(text))
-	{
-		text = nullptr;
-	}
-
-	if (text)
-	{
-		// Show search results
-		gtk_stack_set_visible_child_name(m_contents_stack, "search");
-	}
-	else
-	{
-		// Show active panel
-		gtk_stack_set_visible_child_name(m_contents_stack, "contents");
-	}
-
-	// Apply filter
-	m_search_results->set_filter(text);
+	// Search is not part of the three-column layout.
 }
 
 //-----------------------------------------------------------------------------
 
 void WhiskerMenu::Window::update_layout()
 {
-	// Set vertical position of commands
-	g_object_ref(m_commands_box);
-	gtk_container_remove(GTK_CONTAINER(gtk_widget_get_parent(GTK_WIDGET(m_commands_box))), GTK_WIDGET(m_commands_box));
-	if (m_layout_commands_alternate)
-	{
-		gtk_box_pack_start(m_search_box, GTK_WIDGET(m_commands_box), false, false, 0);
-
-		if (!m_layout_categories_horizontal)
-		{
-			if (m_layout_ltr == m_layout_categories_alternate)
-			{
-				gtk_box_reorder_child(m_search_box, GTK_WIDGET(m_commands_box), 0);
-				gtk_box_reorder_child(m_search_box, GTK_WIDGET(m_search_entry), 1);
-			}
-		}
-		else
-		{
-			if (!m_layout_ltr)
-			{
-				gtk_box_reorder_child(m_search_box, GTK_WIDGET(m_commands_box), 0);
-				gtk_box_reorder_child(m_search_box, GTK_WIDGET(m_search_entry), 1);
-			}
-		}
-	}
-	else
-	{
-		gtk_box_pack_start(m_title_box, GTK_WIDGET(m_commands_box), false, false, 0);
-	}
-	g_object_unref(m_commands_box);
-
-	// Set horizontal position of categories
-	g_object_ref(m_category_buttons);
-	if (m_layout_categories_horizontal)
-	{
-		if (gtk_orientable_get_orientation(GTK_ORIENTABLE(m_category_buttons)) == GTK_ORIENTATION_VERTICAL)
-		{
-			gtk_orientable_set_orientation(GTK_ORIENTABLE(m_category_buttons), GTK_ORIENTATION_HORIZONTAL);
-			gtk_container_remove(GTK_CONTAINER(m_sidebar), GTK_WIDGET(m_category_buttons));
-			gtk_widget_set_visible(GTK_WIDGET(m_sidebar), false);
-			gtk_widget_set_visible(GTK_WIDGET(m_categories_box), true);
-			gtk_box_set_center_widget(m_categories_box, GTK_WIDGET(m_category_buttons));
-		}
-	}
-	else
-	{
-		if (gtk_orientable_get_orientation(GTK_ORIENTABLE(m_category_buttons)) == GTK_ORIENTATION_HORIZONTAL)
-		{
-			gtk_orientable_set_orientation(GTK_ORIENTABLE(m_category_buttons), GTK_ORIENTATION_VERTICAL);
-			gtk_container_remove(GTK_CONTAINER(m_categories_box), GTK_WIDGET(m_category_buttons));
-			gtk_widget_set_visible(GTK_WIDGET(m_categories_box), false);
-			gtk_widget_set_visible(GTK_WIDGET(m_sidebar), true);
-			gtk_container_add(GTK_CONTAINER(m_sidebar), GTK_WIDGET(m_category_buttons));
-		}
-	}
-	g_object_unref(m_category_buttons);
-
-	// Handle showing username and profile
-	if (m_profile_shape != Settings::ProfileHidden)
-	{
-		gtk_widget_set_visible(m_profile->get_picture(), true);
-		gtk_widget_set_visible(m_profile->get_username(), true);
-		gtk_widget_set_visible(GTK_WIDGET(m_title_box), true);
-	}
-	else
-	{
-		gtk_widget_set_visible(m_profile->get_picture(), false);
-		gtk_widget_set_visible(m_profile->get_username(), false);
-		gtk_widget_set_visible(GTK_WIDGET(m_title_box), !m_layout_categories_alternate);
-	}
-
-	// Arrange horizontal order of profile picture, username, and commands
-	if (m_layout_ltr && m_layout_commands_alternate)
-	{
-		gtk_widget_set_halign(m_profile->get_username(), GTK_ALIGN_START);
-
-		gtk_box_reorder_child(m_title_box, m_profile->get_picture(), 0);
-		gtk_box_reorder_child(m_title_box, m_profile->get_username(), 1);
-
-		for (int i = 0; i < 9; ++i)
-		{
-			gtk_box_reorder_child(m_commands_box, m_commands_button[i], i);
-		}
-	}
-	else if (m_layout_commands_alternate)
-	{
-		gtk_widget_set_halign(m_profile->get_username(), GTK_ALIGN_END);
-
-		gtk_box_reorder_child(m_title_box, m_profile->get_picture(), 1);
-		gtk_box_reorder_child(m_title_box, m_profile->get_username(), 0);
-
-		for (int i = 0; i < 9; ++i)
-		{
-			gtk_box_reorder_child(m_commands_box, m_commands_button[i], 8 - i);
-		}
-	}
-	else if (m_layout_ltr)
-	{
-		gtk_widget_set_halign(m_profile->get_username(), GTK_ALIGN_START);
-
-		gtk_box_reorder_child(m_title_box, m_profile->get_picture(), 0);
-		gtk_box_reorder_child(m_title_box, m_profile->get_username(), 1);
-		gtk_box_reorder_child(m_title_box, GTK_WIDGET(m_commands_box), 2);
-
-		for (int i = 0; i < 9; ++i)
-		{
-			gtk_box_reorder_child(m_commands_box, m_commands_button[i], i);
-		}
-	}
-	else
-	{
-		gtk_widget_set_halign(m_profile->get_username(), GTK_ALIGN_END);
-
-		gtk_box_reorder_child(m_title_box, m_profile->get_picture(), 2);
-		gtk_box_reorder_child(m_title_box, m_profile->get_username(), 1);
-		gtk_box_reorder_child(m_title_box, GTK_WIDGET(m_commands_box), 0);
-
-		for (int i = 0; i < 9; ++i)
-		{
-			gtk_box_reorder_child(m_commands_box, m_commands_button[i], 8 - i);
-		}
-	}
-
-	// Arrange horizontal order of applications and sidebar
-	g_object_ref(m_categories_box);
-	g_object_ref(m_panels_stack);
-	g_object_ref(m_sidebar);
-
-	GtkStyleContext* context = gtk_widget_get_style_context(GTK_WIDGET(m_category_buttons));
-	if (gtk_style_context_has_class(context, "left"))
-	{
-		gtk_style_context_remove_class(context, "left");
-	}
-	else if (gtk_style_context_has_class(context, "right"))
-	{
-		gtk_style_context_remove_class(context, "right");
-	}
-	else if (gtk_style_context_has_class(context, "top"))
-	{
-		gtk_style_context_remove_class(context, "top");
-	}
-	else if (gtk_style_context_has_class(context, "bottom"))
-	{
-		gtk_style_context_remove_class(context, "bottom");
-	}
-
-	gtk_grid_remove_row(m_contents_box, 1);
-	gtk_grid_remove_row(m_contents_box, 0);
-	if (m_layout_categories_horizontal)
-	{
-		gtk_grid_set_column_spacing(m_contents_box, 0);
-		gtk_grid_set_row_spacing(m_contents_box, 6);
-
-		gtk_style_context_add_class(context, m_layout_categories_alternate ? "bottom" : "top");
-	}
-	else
-	{
-		gtk_grid_set_column_spacing(m_contents_box, 6);
-		gtk_grid_set_row_spacing(m_contents_box, 0);
-
-		gtk_style_context_add_class(context, (m_layout_ltr == m_layout_categories_alternate) ? "left" : "right");
-	}
-
-	if (m_layout_ltr != m_layout_categories_alternate)
-	{
-		gtk_grid_attach(m_contents_box, GTK_WIDGET(m_panels_stack), 0, 0, 1, 1);
-		gtk_grid_attach(m_contents_box, GTK_WIDGET(m_sidebar), 1, 0, 1, 1);
-
-		gtk_box_reorder_child(m_commands_box, m_commands_spacer, 0);
-	}
-	else
-	{
-		gtk_grid_attach(m_contents_box, GTK_WIDGET(m_sidebar), 0, 0, 1, 1);
-		gtk_grid_attach(m_contents_box, GTK_WIDGET(m_panels_stack), 1, 0, 1, 1);
-
-		gtk_box_reorder_child(m_commands_box, m_commands_spacer, 9);
-	}
-
-	if (!m_layout_categories_alternate)
-	{
-		gtk_grid_insert_row(m_contents_box, 0);
-		gtk_grid_attach(m_contents_box, GTK_WIDGET(m_categories_box), 0, 0, 2, 1);
-	}
-	else
-	{
-		gtk_grid_attach(m_contents_box, GTK_WIDGET(m_categories_box), 0, 1, 2, 1);
-	}
-
-	g_object_unref(m_sidebar);
-	g_object_unref(m_panels_stack);
-	g_object_unref(m_categories_box);
-
-	// Arrange vertical order of header, applications, and search
-	if (m_layout_search_alternate && m_layout_profile_alternate)
-	{
-		gtk_box_reorder_child(m_vbox, GTK_WIDGET(m_contents_stack), 0);
-		gtk_box_reorder_child(m_vbox, GTK_WIDGET(m_search_box), 1);
-		gtk_box_reorder_child(m_vbox, GTK_WIDGET(m_title_box), 2);
-	}
-	else if (m_layout_profile_alternate)
-	{
-		gtk_box_reorder_child(m_vbox, GTK_WIDGET(m_search_box), 0);
-		gtk_box_reorder_child(m_vbox, GTK_WIDGET(m_contents_stack), 1);
-		gtk_box_reorder_child(m_vbox, GTK_WIDGET(m_title_box), 2);
-	}
-	else if (m_layout_search_alternate)
-	{
-		gtk_box_reorder_child(m_vbox, GTK_WIDGET(m_title_box), 0);
-		gtk_box_reorder_child(m_vbox, GTK_WIDGET(m_contents_stack), 1);
-		gtk_box_reorder_child(m_vbox, GTK_WIDGET(m_search_box), 2);
-	}
-	else
-	{
-		gtk_box_reorder_child(m_vbox, GTK_WIDGET(m_title_box), 0);
-		gtk_box_reorder_child(m_vbox, GTK_WIDGET(m_search_box), 1);
-		gtk_box_reorder_child(m_vbox, GTK_WIDGET(m_contents_stack), 2);
-	}
-
-	// Handle size group to category buttons
-	const bool category_show_name = wm_settings->category_show_name && !wm_settings->position_categories_horizontal;
-	if (!m_sidebar_size_group && m_layout_commands_alternate && category_show_name)
-	{
-		m_sidebar_size_group = gtk_size_group_new(GTK_SIZE_GROUP_HORIZONTAL);
-		gtk_size_group_add_widget(m_sidebar_size_group, GTK_WIDGET(m_sidebar));
-		gtk_size_group_add_widget(m_sidebar_size_group, GTK_WIDGET(m_commands_box));
-	}
-	else if (m_sidebar_size_group && (!m_layout_commands_alternate || !category_show_name))
-	{
-		gtk_size_group_remove_widget(m_sidebar_size_group, GTK_WIDGET(m_sidebar));
-		gtk_size_group_remove_widget(m_sidebar_size_group, GTK_WIDGET(m_commands_box));
-		g_object_unref(m_sidebar_size_group);
-		m_sidebar_size_group = nullptr;
-	}
+	// The three-column layout is fixed.
 }
-
-//-----------------------------------------------------------------------------

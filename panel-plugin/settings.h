@@ -92,6 +92,38 @@ private:
 };
 
 
+// Double setting
+class Double
+{
+public:
+	explicit Double(const gchar* property, double data, double min, double max);
+
+	operator double() const
+	{
+		return m_data;
+	}
+
+	Double& operator=(double data)
+	{
+		set(data, true);
+		return *this;
+	}
+
+	void load(XfceRc* rc, bool is_default);
+	bool load(const gchar* property, const GValue* value);
+
+private:
+	void set(double data, bool store);
+
+private:
+	const gchar* const m_property;
+	const double m_min;
+	const double m_max;
+	double m_default;
+	double m_data;
+};
+
+
 // String setting
 class String
 {
@@ -370,6 +402,7 @@ public:
 	Integer menu_width;
 	Integer menu_height;
 	Integer menu_opacity;
+	Double background_alpha;
 
 	friend class Plugin;
 };

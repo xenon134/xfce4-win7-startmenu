@@ -104,7 +104,8 @@ Settings::Settings(Plugin* plugin) :
 
 	menu_width("/menu-width", 450, 10, SHRT_MAX),
 	menu_height("/menu-height", 500, 10, SHRT_MAX),
-	menu_opacity("/menu-opacity", 100, 0, 100)
+	menu_opacity("/menu-opacity", 100, 0, 100),
+	background_alpha("/background-alpha", 0.8, 0.0, 1.0)
 {
 	command[CommandSettings] = new Command("/command-settings", "/show-command-settings",
 			"org.xfce.settings.manager", "preferences-desktop",
@@ -270,6 +271,7 @@ void Settings::load(const gchar* file, bool is_default)
 	menu_width.load(rc, is_default);
 	menu_height.load(rc, is_default);
 	menu_opacity.load(rc, is_default);
+	background_alpha.load(rc, is_default);
 
 	for (auto i : command)
 	{
@@ -414,6 +416,7 @@ void Settings::property_changed(const gchar* property, const GValue* value)
 			|| menu_width.load(property, value)
 			|| menu_height.load(property, value)
 			|| menu_opacity.load(property, value)
+			|| background_alpha.load(property, value)
 			|| search_actions.load(property, value))
 	{
 	}
@@ -537,6 +540,83 @@ void Integer::set(int data, bool store)
 	{
 		wm_settings->begin_property_update();
 		xfconf_channel_set_int(wm_settings->channel, m_property, m_data);
+		wm_settings->end_property_update();
+	}
+}
+
+//-----------------------------------------------------------------------------
+
+Double::Double(const gchar* property, double data, double min, double max) :
+	m_property(property),
+	m_min(min),
+	m_max(max),
+	m_default(CLAMP(data, min, max)),
+	m_data(m_default)
+{
+}
+
+//-----------------------------------------------------------------------------
+
+void Double::load(XfceRc* rc, bool is_default)
+{
+	const gchar* value = xfce_rc_read_entry(rc, m_property + 1, nullptr);
+	if (value)
+	{
+		set(g_ascii_strtod(value, nullptr), !is_default);
+	}
+
+	if (is_default)
+	{
+		m_default = m_data;
+	}
+}
+
+//-----------------------------------------------------------------------------
+
+bool Double::load(const gchar* property, const GValue* value)
+{
+	if (g_strcmp0(m_property, property) != 0)
+	{
+		return false;
+	}
+
+	if (G_VALUE_HOLDS_DOUBLE(value))
+	{
+		set(g_value_get_double(value), false);
+	}
+	else if (G_VALUE_HOLDS_INT(value))
+	{
+		set(g_value_get_int(value), false);
+	}
+	else if (G_VALUE_HOLDS_STRING(value))
+	{
+		const gchar* text = g_value_get_string(value);
+		set(text ? g_ascii_strtod(text, nullptr) : m_default, false);
+	}
+	else
+	{
+		set(m_default, false);
+	}
+
+	return true;
+}
+
+//-----------------------------------------------------------------------------
+
+void Double::set(double data, bool store)
+{
+	data = CLAMP(data, m_min, m_max);
+	if (m_data == data)
+	{
+		return;
+	}
+
+	m_data = data;
+
+	if (store && wm_settings->channel)
+	{
+		wm_settings->begin_property_update();
+		xfconf_channel_set_double(wm_settings->channel, m_property, m_data);
 		wm_settings->end_property_update();
 	}
 }

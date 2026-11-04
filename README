@@ -3,6 +3,9 @@ Website
 
 https://docs.xfce.org/panel-plugins/xfce4-whiskermenu-plugin
 
+This fork adds a fixed Windows 10 / Aero style three-column layout.
+See AERO.md for the layout, build and install instructions.
+
 
 About
 =====
