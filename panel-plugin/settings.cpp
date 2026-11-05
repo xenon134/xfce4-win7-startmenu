@@ -105,6 +105,7 @@ Settings::Settings(Plugin* plugin) :
 	menu_width("/menu-width", 450, 10, SHRT_MAX),
 	menu_height("/menu-height", 500, 10, SHRT_MAX),
 	menu_opacity("/menu-opacity", 100, 0, 100),
+	app_row_spacing("/app-row-spacing", 20, 0, 100),
 	background_alpha("/background-alpha", 0.8, 0.0, 1.0)
 {
 	command[CommandSettings] = new Command("/command-settings", "/show-command-settings",
@@ -271,6 +272,7 @@ void Settings::load(const gchar* file, bool is_default)
 	menu_width.load(rc, is_default);
 	menu_height.load(rc, is_default);
 	menu_opacity.load(rc, is_default);
+	app_row_spacing.load(rc, is_default);
 	background_alpha.load(rc, is_default);
 
 	for (auto i : command)
@@ -416,6 +418,7 @@ void Settings::property_changed(const gchar* property, const GValue* value)
 			|| menu_width.load(property, value)
 			|| menu_height.load(property, value)
 			|| menu_opacity.load(property, value)
+			|| app_row_spacing.load(property, value)
 			|| background_alpha.load(property, value)
 			|| search_actions.load(property, value))
 	{

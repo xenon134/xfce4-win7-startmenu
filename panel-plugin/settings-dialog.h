@@ -75,6 +75,7 @@ private:
 	GtkWidget* m_category_icon_size;
 	GtkWidget* m_item_icon_size;
 	GtkWidget* m_background_opacity;
+	GtkWidget* m_app_row_spacing;
 
 	// Layout
 	GtkWidget* m_position_categories_horizontal;

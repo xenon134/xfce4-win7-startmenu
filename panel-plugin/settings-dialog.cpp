@@ -602,9 +602,28 @@ GtkWidget* SettingsDialog::init_general_tab()
 			wm_settings->background_alpha = gtk_range_get_value(range);
 		});
 
+	// Add option to control application row spacing
+	GtkWidget* opacity_label = label;
+	label = gtk_label_new_with_mnemonic(_("Application row spacing:"));
+	gtk_widget_set_halign(label, GTK_ALIGN_START);
+	gtk_grid_attach(page, label, 0, 10, 1, 1);
+
+	m_app_row_spacing = gtk_spin_button_new_with_range(0, 100, 1);
+	gtk_widget_set_halign(m_app_row_spacing, GTK_ALIGN_START);
+	gtk_widget_set_hexpand(m_app_row_spacing, false);
+	gtk_grid_attach(page, m_app_row_spacing, 1, 10, 1, 1);
+	gtk_label_set_mnemonic_widget(GTK_LABEL(label), m_app_row_spacing);
+	gtk_spin_button_set_value(GTK_SPIN_BUTTON(m_app_row_spacing), wm_settings->app_row_spacing);
+
+	connect(m_app_row_spacing, "value-changed",
+		[](GtkSpinButton* button)
+		{
+			wm_settings->app_row_spacing = gtk_spin_button_get_value_as_int(button);
+		});
+
 	GdkScreen* screen = gtk_widget_get_screen(m_window);
 	const bool enabled = gdk_screen_is_composited(screen);
-	gtk_widget_set_sensitive(label, enabled);
+	gtk_widget_set_sensitive(opacity_label, enabled);
 	gtk_widget_set_sensitive(GTK_WIDGET(m_background_opacity), enabled);
 
 	return GTK_WIDGET(page);

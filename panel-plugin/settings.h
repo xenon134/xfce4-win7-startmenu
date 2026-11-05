@@ -402,6 +402,7 @@ public:
 	Integer menu_width;
 	Integer menu_height;
 	Integer menu_opacity;
+	Integer app_row_spacing;
 	Double background_alpha;
 
 	friend class Plugin;

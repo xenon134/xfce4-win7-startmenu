@@ -596,10 +596,13 @@ void WhiskerMenu::Window::build_app_list()
 	g_list_free_full(rows, (GDestroyNotify)gtk_widget_destroy);
 
 	// Add applications grouped by their first letter
+	const int row_gap = wm_settings->app_row_spacing;
 	gunichar last_group = 0;
 	for (Launcher* launcher : m_applications->find_all())
 	{
-		const gchar* name = launcher->get_text();
+		// Use the plain display name: get_text() starts with an invisible
+		// direction mark and may contain markup escapes.
+		const gchar* name = launcher->get_display_name();
 		if (!name || !*name)
 		{
 			continue;
@@ -638,8 +641,8 @@ void WhiskerMenu::Window::build_app_list()
 		GtkWidget* box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 12);
 		gtk_widget_set_margin_start(box, 16);
 		gtk_widget_set_margin_end(box, 12);
-		gtk_widget_set_margin_top(box, 4);
-		gtk_widget_set_margin_bottom(box, 4);
+		gtk_widget_set_margin_top(box, row_gap / 2);
+		gtk_widget_set_margin_bottom(box, row_gap - (row_gap / 2));
 
 		GIcon* icon = launcher->get_icon();
 		GtkWidget* image = icon

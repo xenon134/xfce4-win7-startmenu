@@ -7,8 +7,12 @@
       stock pinned-favorites grid in the remaining width.
 - [x] Bottom-anchored strip buttons: Videos, Music, Documents, Settings, Power.
 - [x] All Applications list built from `ApplicationsPage::find_all()`, grouped
-      by first letter, with `#` for non-alphabetic names.
+      by the plain display name's first letter (fixed: the markup text starts
+      with an invisible LRM, which put everything under `#`), with `#` for
+      non-alphabetic names.
 - [x] Clicking an app row adds it to Recent, hides the menu, and launches it.
+- [x] Configurable application row spacing, default 20 px
+      (`/app-row-spacing` plus a settings-dialog spin button).
 - [x] Old title row, search box, category sidebar and horizontal category row
       hidden; keyboard focus goes to the app list.
 - [x] Custom black background drawn by the plugin, with configurable
@@ -24,6 +28,8 @@
 
 - [ ] Remove or disable upstream layout options in the settings dialog that no
       longer affect the fixed three-column layout.
+- [ ] Add the upstream right-click context menu to the custom application list
+      (Add to Favorites / Desktop / Panel / Autostart, edit, hide).
 - [ ] Decide whether to reintroduce search (e.g. type-to-filter in the app
       list) or keep the menu browse-only.
 - [ ] Optional visual polish: separate tint for the left strip, hover states

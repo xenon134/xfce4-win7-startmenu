@@ -23,7 +23,9 @@ recipe, and a user-local installer.
   existing Whisker command buttons.
 * **Middle column (409 px)** is a `GtkListBox` inside a `GtkScrolledWindow`.
   Every visible menu entry is grouped under a bold letter header (`#`, `A`,
-  `B`, ...). Clicking a row adds it to Recent, closes the menu, and launches it.
+  `B`, ...), using the plain display name rather than the markup/direction
+  text. Clicking a row adds it to Recent, closes the menu, and launches it.
+  Rows are spaced 20 px apart by default; the gap is configurable (below).
 * **Right column** is the stock pinned-favorites view, filling the remaining
   width. It is kept as-is.
 
@@ -51,6 +53,21 @@ xfconf-query -c xfce4-panel -p /plugins/plugin-11/background-alpha -n -t double 
 The settings dialog's "Background opacity" slider edits the same property.
 Text is forced to `#ffffff` with an application-priority CSS provider, so it
 stays readable on the dark background regardless of the GTK theme.
+
+## Application row spacing
+
+The gap between application rows is a separate integer property, in pixels:
+
+```sh
+# current plugin instance (20 px default; range 0-100)
+xfconf-query -c xfce4-panel -p /plugins/plugin-11/app-row-spacing -t int -s 20
+
+# create it if missing
+xfconf-query -c xfce4-panel -p /plugins/plugin-11/app-row-spacing -n -t int -s 20
+```
+
+The settings dialog's "Application row spacing" spin button edits the same
+value. Changes are applied the next time the menu opens.
 
 ## Build
 
@@ -101,3 +118,6 @@ but the user-local route avoids root entirely and is the supported path here.
   77 px and the list stays 409 px; only the favorites column grows.
 * `menu_opacity` remains in the settings structure for compatibility with
   existing `.rc` files but the background draw uses `background_alpha`.
+* The new custom application list does not yet implement the upstream
+  right-click context menu ("Add to Favorites", "Add to Desktop", etc.);
+  favorites can still be reordered/removed from the stock right-hand grid.
