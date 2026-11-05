@@ -99,6 +99,22 @@ application list with a grid of the letters present in the current list.
 Clicking a letter switches back to the list and scrolls that letter's section
 to the top. `Escape` returns to the list without changing the scroll position.
 
+## Opening animation
+
+Opening the menu unrolls it vertically from the bottom edge upward. The visible
+height follows:
+
+```text
+height(t) = full_height * (10*t - 25*t^2)     t = 0 .. 0.2 s
+```
+
+The curve reaches full height at 0.2 s and has zero velocity there. The menu
+contents sit in a bottom-anchored container that is allocated the animated
+height, so rows and panels reflow as the menu grows rather than being revealed
+under a fixed mask. An X11 window shape clips the part that has not appeared
+yet, keeping the bottom edge fixed while the top edge moves up. Closing is
+instantaneous, and on non-X11 backends the menu simply opens at full size.
+
 ## Build
 
 The build runs in a throwaway Podman container on top of the local

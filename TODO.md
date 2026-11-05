@@ -31,6 +31,8 @@
 - [x] Letter picker: clicking a section header replaces the list with a grid
       of available letters; clicking a letter returns to the list scrolled to
       that section.
+- [x] Vertical opening animation from bottom to top using
+      `height(t) = full_height * (10t - 25t^2)` for t = 0..0.2 s.
 
 ## Remaining / optional
 

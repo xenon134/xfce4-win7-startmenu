@@ -103,6 +103,10 @@ private:
 	void clear_filter();
 	void append_filter(gunichar character);
 	void remove_filter_character();
+	void start_slide_animation();
+	void stop_slide_animation();
+	void apply_slide_height(double progress);
+	gboolean on_slide_animation_tick();
 	void open_user_directory(GUserDirectory directory, const gchar* fallback_name);
 	void add_strip_button(GtkWidget* button);
 	gboolean on_key_press_event(GtkWidget* widget, GdkEventKey* key_event);
@@ -128,6 +132,7 @@ private:
 	Plugin* m_plugin;
 
 	GtkWindow* m_window;
+	GtkWidget* m_slide_container;
 
 	GtkStack* m_window_stack;
 	GtkSpinner* m_window_load_spinner;
@@ -161,6 +166,8 @@ private:
 	GtkFlowBox* m_letters_grid;
 	std::string m_filter_text;
 	gunichar m_scroll_letter;
+	guint m_slide_timer;
+	gint64 m_slide_start;
 
 	SearchPage* m_search_results;
 	FavoritesPage* m_favorites;

@@ -41,6 +41,10 @@
 #include <gtk-layer-shell.h>
 #endif
 
+#ifdef GDK_WINDOWING_X11
+#include <gdk/gdkx.h>
+#endif
+
 #include <climits>
 #include <ctime>
 
@@ -48,9 +52,98 @@ using namespace WhiskerMenu;
 
 //-----------------------------------------------------------------------------
 
+// Container that gives its child the bottom-anchored slice of the window used
+// by the slide-out animation. The child is laid out at the animated height so
+// the menu contents reflow as the menu grows, instead of being revealed by a
+// static mask.
+G_DECLARE_FINAL_TYPE(WhiskerMenuSlideBox, whiskermenu_slide_box, WHISKERMENU, SLIDE_BOX, GtkBin)
+
+struct _WhiskerMenuSlideBox
+{
+	GtkBin parent_instance;
+	gint height;
+};
+
+G_DEFINE_TYPE(WhiskerMenuSlideBox, whiskermenu_slide_box, GTK_TYPE_BIN)
+
+static void whiskermenu_slide_box_get_preferred_width(GtkWidget*, gint* minimum, gint* natural)
+{
+	*minimum = 0;
+	*natural = 0;
+}
+
+//-----------------------------------------------------------------------------
+
+static void whiskermenu_slide_box_get_preferred_height(GtkWidget*, gint* minimum, gint* natural)
+{
+	*minimum = 0;
+	*natural = 0;
+}
+
+//-----------------------------------------------------------------------------
+
+static void whiskermenu_slide_box_size_allocate(GtkWidget* widget, GtkAllocation* allocation)
+{
+	WhiskerMenuSlideBox* self = WHISKERMENU_SLIDE_BOX(widget);
+	GtkWidget* child = gtk_bin_get_child(GTK_BIN(widget));
+	if (!child || !gtk_widget_get_visible(child))
+	{
+		return;
+	}
+
+	const gint height = CLAMP(self->height, 0, allocation->height);
+	GtkAllocation child_allocation;
+	child_allocation.x = allocation->x;
+	child_allocation.y = allocation->y + allocation->height - height;
+	child_allocation.width = allocation->width;
+	child_allocation.height = height;
+	gtk_widget_size_allocate(child, &child_allocation);
+}
+
+//-----------------------------------------------------------------------------
+
+static void whiskermenu_slide_box_init(WhiskerMenuSlideBox* self)
+{
+	self->height = G_MAXINT;
+}
+
+//-----------------------------------------------------------------------------
+
+static void whiskermenu_slide_box_class_init(WhiskerMenuSlideBoxClass* klass)
+{
+	GtkWidgetClass* widget_class = GTK_WIDGET_CLASS(klass);
+	widget_class->get_preferred_width = whiskermenu_slide_box_get_preferred_width;
+	widget_class->get_preferred_height = whiskermenu_slide_box_get_preferred_height;
+	widget_class->size_allocate = whiskermenu_slide_box_size_allocate;
+}
+
+//-----------------------------------------------------------------------------
+
+static GtkWidget* whiskermenu_slide_box_new()
+{
+	return GTK_WIDGET(g_object_new(whiskermenu_slide_box_get_type(), nullptr));
+}
+
+//-----------------------------------------------------------------------------
+
+static void whiskermenu_slide_box_set_height(WhiskerMenuSlideBox* self, gint height)
+{
+	height = MAX(height, 0);
+	if (self->height == height)
+	{
+		return;
+	}
+
+	self->height = height;
+	gtk_widget_queue_resize(GTK_WIDGET(self));
+}
+
+//-----------------------------------------------------------------------------
+
 WhiskerMenu::Window::Window(Plugin* plugin) :
 	m_plugin(plugin),
 	m_window(nullptr),
+	m_slide_container(nullptr),
 	m_position(PositionAtButton),
 	m_sidebar_strip(nullptr),
 	m_apps_stack(nullptr),
@@ -59,6 +152,8 @@ WhiskerMenu::Window::Window(Plugin* plugin) :
 	m_letters_scroll(nullptr),
 	m_letters_grid(nullptr),
 	m_scroll_letter(0),
+	m_slide_timer(0),
+	m_slide_start(0),
 	m_sidebar_size_group(nullptr),
 	m_geometry{0,0,1,1},
 	m_layout_ltr(true),
@@ -175,7 +270,12 @@ WhiskerMenu::Window::Window(Plugin* plugin) :
 	// Create the border of the window
 	GtkWidget* frame = gtk_frame_new(nullptr);
 	gtk_frame_set_shadow_type(GTK_FRAME(frame), GTK_SHADOW_NONE);
-	gtk_container_add(GTK_CONTAINER(m_window), frame);
+
+	// Hold the frame in a bottom-anchored container that can be allocated a
+	// partial height while the menu slides out.
+	m_slide_container = whiskermenu_slide_box_new();
+	gtk_container_add(GTK_CONTAINER(m_window), m_slide_container);
+	gtk_container_add(GTK_CONTAINER(m_slide_container), frame);
 
 	// Create window contents stack
 	m_window_stack = GTK_STACK(gtk_stack_new());
@@ -595,6 +695,7 @@ WhiskerMenu::Window::Window(Plugin* plugin) :
 	g_object_unref(css_provider);
 
 	// Show widgets
+	gtk_widget_show(m_slide_container);
 	gtk_widget_show_all(frame);
 	m_default_button->set_active(true);
 
@@ -624,6 +725,8 @@ WhiskerMenu::Window::Window(Plugin* plugin) :
 
 WhiskerMenu::Window::~Window()
 {
+	stop_slide_animation();
+
 	for (int i = 0; i < 9; ++i)
 	{
 		g_signal_handler_disconnect(m_commands_button[i], m_command_slots[i]);
@@ -991,6 +1094,131 @@ void WhiskerMenu::Window::remove_filter_character()
 
 //-----------------------------------------------------------------------------
 
+void WhiskerMenu::Window::start_slide_animation()
+{
+	if (m_slide_timer)
+	{
+		g_source_remove(m_slide_timer);
+		m_slide_timer = 0;
+	}
+
+	m_slide_start = g_get_monotonic_time();
+	apply_slide_height(0.0);
+	m_slide_timer = g_timeout_add(
+		16,
+		+[](gpointer data) -> gboolean
+		{
+			return static_cast<Window*>(data)->on_slide_animation_tick();
+		},
+		this);
+}
+
+//-----------------------------------------------------------------------------
+
+void WhiskerMenu::Window::stop_slide_animation()
+{
+	if (m_slide_timer)
+	{
+		g_source_remove(m_slide_timer);
+		m_slide_timer = 0;
+	}
+
+	if (m_slide_container)
+	{
+		whiskermenu_slide_box_set_height(WHISKERMENU_SLIDE_BOX(m_slide_container), G_MAXINT);
+	}
+
+	GdkWindow* window = gtk_widget_get_window(GTK_WIDGET(m_window));
+	if (!window)
+	{
+		return;
+	}
+
+#ifdef GDK_WINDOWING_X11
+	if (!GDK_IS_X11_WINDOW(window))
+	{
+		return;
+	}
+#endif
+
+	gdk_window_shape_combine_region(window, nullptr, 0, 0);
+}
+
+//-----------------------------------------------------------------------------
+
+void WhiskerMenu::Window::apply_slide_height(double elapsed)
+{
+	GdkWindow* window = gtk_widget_get_window(GTK_WIDGET(m_window));
+	if (!window)
+	{
+		return;
+	}
+
+#ifdef GDK_WINDOWING_X11
+	if (!GDK_IS_X11_WINDOW(window))
+	{
+		return;
+	}
+#endif
+
+	const int full_width = gdk_window_get_width(window);
+	const int full_height = gdk_window_get_height(window);
+	if (full_width <= 0 || full_height <= 0)
+	{
+		return;
+	}
+
+	// height(t) = full_height * (10t - 25t^2), for t in [0, 0.2].
+	static constexpr double duration = 0.2;
+	if (elapsed >= duration)
+	{
+		if (m_slide_container)
+		{
+			whiskermenu_slide_box_set_height(WHISKERMENU_SLIDE_BOX(m_slide_container), full_height);
+		}
+		gdk_window_shape_combine_region(window, nullptr, 0, 0);
+	}
+	else
+	{
+		const double fraction = CLAMP(10.0 * elapsed - 25.0 * elapsed * elapsed, 0.0, 1.0);
+		int visible_height = static_cast<int>(full_height * fraction + 0.5);
+		visible_height = CLAMP(visible_height, 0, full_height);
+
+		// Keep the bottom edge fixed and grow upward. The content is laid out
+		// at the same height, so rows and panels reflow as the menu opens.
+		if (m_slide_container)
+		{
+			whiskermenu_slide_box_set_height(WHISKERMENU_SLIDE_BOX(m_slide_container), visible_height);
+		}
+		cairo_rectangle_int_t rectangle = { 0, full_height - visible_height, full_width, visible_height };
+		cairo_region_t* region = cairo_region_create_rectangle(&rectangle);
+		gdk_window_shape_combine_region(window, region, 0, 0);
+		cairo_region_destroy(region);
+	}
+
+	gtk_widget_queue_draw(GTK_WIDGET(m_window));
+}
+
+//-----------------------------------------------------------------------------
+
+gboolean WhiskerMenu::Window::on_slide_animation_tick()
+{
+	static constexpr double duration = 0.2;
+	const double elapsed = (g_get_monotonic_time() - m_slide_start) / 1000000.0;
+
+	apply_slide_height(elapsed);
+
+	if (elapsed >= duration)
+	{
+		m_slide_timer = 0;
+		return G_SOURCE_REMOVE;
+	}
+
+	return G_SOURCE_CONTINUE;
+}
+
+//-----------------------------------------------------------------------------
+
 void WhiskerMenu::Window::open_user_directory(GUserDirectory directory, const gchar* fallback_name)
 {
 	const gchar* path = g_get_user_special_dir(directory);
@@ -1043,6 +1271,9 @@ void WhiskerMenu::Window::hide(bool lost_focus)
 	{
 		gtk_stack_set_visible_child_name(m_apps_stack, "list");
 	}
+
+	// Stop any in-progress slide-out animation and restore the full window shape.
+	stop_slide_animation();
 
 	// Hide window
 	gtk_widget_hide(GTK_WIDGET(m_window));
@@ -1213,6 +1444,10 @@ void WhiskerMenu::Window::show(const Position position)
 	// Show window
 	gtk_window_present(m_window);
 
+	// Hide the first frame behind an empty shape so opening never flashes the
+	// full menu before the animation starts.
+	apply_slide_height(0.0);
+
 	if (resized)
 	{
 		check_scrollbar_needed();
@@ -1236,6 +1471,10 @@ void WhiskerMenu::Window::show(const Position position)
 
 	// Move window
 	move_window();
+
+	// Start the height slide from the final position, after the window has its
+	// real size and no longer risks being repositioned by the window manager.
+	start_slide_animation();
 }
 
 //-----------------------------------------------------------------------------
@@ -1259,6 +1498,8 @@ void WhiskerMenu::Window::resize(int delta_x, int delta_y, int delta_width, int 
 
 void WhiskerMenu::Window::resize_start()
 {
+	stop_slide_animation();
+
 	m_resizing = true;
 	set_child_has_focus();
 }
