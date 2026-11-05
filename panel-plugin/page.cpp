@@ -405,11 +405,29 @@ void Page::create_context_menu(GtkTreePath* path, GdkEvent* event)
 	GtkTreeIter iter;
 	gtk_tree_model_get_iter(model, &iter, path);
 	gtk_tree_model_get(model, &iter, LauncherView::COLUMN_LAUNCHER, &element, -1);
-	if (!(m_selected_launcher = dynamic_cast<Launcher*>(element)))
+	Launcher* launcher = dynamic_cast<Launcher*>(element);
+	if (!launcher)
 	{
 		gtk_tree_path_free(path);
 		return;
 	}
+
+	show_context_menu(launcher, m_view->get_widget(), event);
+
+	// Keep selection
+	m_view->select_path(path);
+	gtk_tree_path_free(path);
+}
+
+//-----------------------------------------------------------------------------
+
+void Page::show_context_menu(Launcher* launcher, GtkWidget* anchor, GdkEvent* event)
+{
+	if (!launcher)
+	{
+		return;
+	}
+	m_selected_launcher = launcher;
 
 	// Create context menu
 	GtkWidget* menu = gtk_menu_new();
@@ -448,7 +466,7 @@ void Page::create_context_menu(GtkTreePath* path, GdkEvent* event)
 
 	if (!m_window->get_favorites()->contains(m_selected_launcher))
 	{
-		menuitem = whiskermenu_image_menu_item_new("bookmark-new", _("Add to Favorites"));
+		menuitem = whiskermenu_image_menu_item_new("bookmark-new", _("Pin to Start"));
 		connect(menuitem, "activate",
 			[this](GtkMenuItem*)
 			{
@@ -459,7 +477,7 @@ void Page::create_context_menu(GtkTreePath* path, GdkEvent* event)
 	}
 	else
 	{
-		menuitem = whiskermenu_image_menu_item_new("list-remove", _("Remove from Favorites"));
+		menuitem = whiskermenu_image_menu_item_new("list-remove", _("Unpin from Start"));
 		connect(menuitem, "activate",
 			[this](GtkMenuItem*)
 			{
@@ -535,12 +553,15 @@ void Page::create_context_menu(GtkTreePath* path, GdkEvent* event)
 
 	// Show context menu
 	m_window->set_child_has_focus();
-	gtk_menu_attach_to_widget(GTK_MENU(menu), m_view->get_widget(), nullptr);
-	gtk_menu_popup_at_pointer(GTK_MENU(menu), event);
-
-	// Keep selection
-	m_view->select_path(path);
-	gtk_tree_path_free(path);
+	gtk_menu_attach_to_widget(GTK_MENU(menu), anchor, nullptr);
+	if (event)
+	{
+		gtk_menu_popup_at_pointer(GTK_MENU(menu), event);
+	}
+	else
+	{
+		gtk_menu_popup_at_widget(GTK_MENU(menu), anchor, GDK_GRAVITY_SOUTH_WEST, GDK_GRAVITY_NORTH_WEST, nullptr);
+	}
 }
 
 //-----------------------------------------------------------------------------

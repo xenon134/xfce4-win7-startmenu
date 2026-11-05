@@ -69,6 +69,36 @@ xfconf-query -c xfce4-panel -p /plugins/plugin-11/app-row-spacing -n -t int -s 2
 The settings dialog's "Application row spacing" spin button edits the same
 value. Changes are applied the next time the menu opens.
 
+## Type to filter
+
+The menu opens with keyboard focus in the application list. Typing printable
+characters filters the list immediately using the same fuzzy matcher as the
+stock Whisker search page (names, generic names, comments and keywords). The
+typed text is intentionally invisible in this layout for now.
+
+* `Backspace` removes the last character.
+* `Escape` returns from the letter grid, then clears a non-empty filter,
+  then closes the menu on the next press.
+* The filter is cleared every time the menu opens or closes.
+
+Filtered results keep their alphabetical order and letter groups. If nothing
+matches, the list shows "No applications found".
+
+## Right-click and Pin to Start
+
+Right-clicking an application row opens the stock application context menu
+anchored to the list. Its favourite action is labelled **Pin to Start** (or
+**Unpin from Start** when the application is already pinned); pinning adds the
+application to the pinned grid on the right. The rest of the menu is unchanged
+(desktop actions, Add to Desktop/Panel/Autostart, Edit, Hide).
+
+## Letter picker
+
+Clicking any letter header (`A`, `B`, `C`, ...) temporarily replaces the
+application list with a grid of the letters present in the current list.
+Clicking a letter switches back to the list and scrolls that letter's section
+to the top. `Escape` returns to the list without changing the scroll position.
+
 ## Build
 
 The build runs in a throwaway Podman container on top of the local
@@ -111,13 +141,13 @@ but the user-local route avoids root entirely and is the supported path here.
 
 ## Notes / known limitations
 
-* Search and the old category sidebar are removed from this layout. The
-  settings dialog still exposes the upstream layout options, but they are
-  ignored by the fixed three-column layout.
+* The old search box and category sidebar are hidden. The settings dialog
+  still exposes the upstream layout options, but they are ignored by the fixed
+  three-column layout. Search is handled by type-to-filter instead.
 * The menu is still resizable with the stock edge resizers. The strip stays
   77 px and the list stays 409 px; only the favorites column grows.
 * `menu_opacity` remains in the settings structure for compatibility with
   existing `.rc` files but the background draw uses `background_alpha`.
-* The new custom application list does not yet implement the upstream
-  right-click context menu ("Add to Favorites", "Add to Desktop", etc.);
-  favorites can still be reordered/removed from the stock right-hand grid.
+* Typing is captured by the application list and the toplevel window. If focus
+  moves into the pinned grid, its own type-ahead may take over until the list
+  is focused again.

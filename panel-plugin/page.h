@@ -58,6 +58,7 @@ public:
 	void reset_selection();
 	void select_first();
 	void update_view();
+	void show_context_menu(Launcher* launcher, GtkWidget* anchor, GdkEvent* event);
 
 protected:
 	Window* get_window() const

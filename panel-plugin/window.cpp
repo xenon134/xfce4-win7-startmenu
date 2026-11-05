@@ -25,6 +25,7 @@
 #include "launcher-view.h"
 #include "plugin.h"
 #include "profile.h"
+#include "query.h"
 #include "recent-page.h"
 #include "resizer.h"
 #include "search-page.h"
@@ -40,6 +41,7 @@
 #include <gtk-layer-shell.h>
 #endif
 
+#include <climits>
 #include <ctime>
 
 using namespace WhiskerMenu;
@@ -51,8 +53,12 @@ WhiskerMenu::Window::Window(Plugin* plugin) :
 	m_window(nullptr),
 	m_position(PositionAtButton),
 	m_sidebar_strip(nullptr),
+	m_apps_stack(nullptr),
 	m_apps_scroll(nullptr),
 	m_apps_list(nullptr),
+	m_letters_scroll(nullptr),
+	m_letters_grid(nullptr),
+	m_scroll_letter(0),
 	m_sidebar_size_group(nullptr),
 	m_geometry{0,0,1,1},
 	m_layout_ltr(true),
@@ -317,9 +323,13 @@ WhiskerMenu::Window::Window(Plugin* plugin) :
 	gtk_style_context_add_class(gtk_widget_get_style_context(GTK_WIDGET(m_sidebar_strip)), "whiskermenu-strip");
 	gtk_grid_attach(m_contents_box, GTK_WIDGET(m_sidebar_strip), 0, 1, 1, 1);
 
+	m_apps_stack = GTK_STACK(gtk_stack_new());
+	gtk_widget_set_size_request(GTK_WIDGET(m_apps_stack), 409, -1);
+	gtk_widget_set_hexpand(GTK_WIDGET(m_apps_stack), false);
+	gtk_widget_set_vexpand(GTK_WIDGET(m_apps_stack), true);
+
 	m_apps_scroll = GTK_SCROLLED_WINDOW(gtk_scrolled_window_new(nullptr, nullptr));
-	gtk_widget_set_size_request(GTK_WIDGET(m_apps_scroll), 409, -1);
-	gtk_widget_set_hexpand(GTK_WIDGET(m_apps_scroll), false);
+	gtk_widget_set_hexpand(GTK_WIDGET(m_apps_scroll), true);
 	gtk_widget_set_vexpand(GTK_WIDGET(m_apps_scroll), true);
 	gtk_scrolled_window_set_propagate_natural_width(m_apps_scroll, false);
 	gtk_scrolled_window_set_policy(m_apps_scroll, GTK_POLICY_NEVER, GTK_POLICY_AUTOMATIC);
@@ -329,18 +339,77 @@ WhiskerMenu::Window::Window(Plugin* plugin) :
 	gtk_list_box_set_selection_mode(m_apps_list, GTK_SELECTION_BROWSE);
 	gtk_list_box_set_activate_on_single_click(m_apps_list, true);
 	gtk_container_add(GTK_CONTAINER(m_apps_scroll), GTK_WIDGET(m_apps_list));
-	gtk_grid_attach(m_contents_box, GTK_WIDGET(m_apps_scroll), 1, 1, 1, 1);
+	gtk_stack_add_named(m_apps_stack, GTK_WIDGET(m_apps_scroll), "list");
+
+	// Letter grid replaces the application list when a section header is clicked.
+	m_letters_scroll = GTK_SCROLLED_WINDOW(gtk_scrolled_window_new(nullptr, nullptr));
+	gtk_widget_set_hexpand(GTK_WIDGET(m_letters_scroll), true);
+	gtk_widget_set_vexpand(GTK_WIDGET(m_letters_scroll), true);
+	gtk_scrolled_window_set_policy(m_letters_scroll, GTK_POLICY_NEVER, GTK_POLICY_AUTOMATIC);
+	gtk_scrolled_window_set_shadow_type(m_letters_scroll, GTK_SHADOW_NONE);
+	gtk_style_context_add_class(gtk_widget_get_style_context(GTK_WIDGET(m_letters_scroll)), "whiskermenu-letters");
+	m_letters_grid = GTK_FLOW_BOX(gtk_flow_box_new());
+	gtk_flow_box_set_selection_mode(m_letters_grid, GTK_SELECTION_NONE);
+	gtk_flow_box_set_min_children_per_line(m_letters_grid, 4);
+	gtk_flow_box_set_max_children_per_line(m_letters_grid, 4);
+	gtk_flow_box_set_homogeneous(m_letters_grid, true);
+	gtk_flow_box_set_row_spacing(m_letters_grid, 8);
+	gtk_flow_box_set_column_spacing(m_letters_grid, 8);
+	gtk_container_set_border_width(GTK_CONTAINER(m_letters_grid), 12);
+	gtk_container_add(GTK_CONTAINER(m_letters_scroll), GTK_WIDGET(m_letters_grid));
+	gtk_stack_add_named(m_apps_stack, GTK_WIDGET(m_letters_scroll), "letters");
+	gtk_stack_set_visible_child_name(m_apps_stack, "list");
+	gtk_grid_attach(m_contents_box, GTK_WIDGET(m_apps_stack), 1, 1, 1, 1);
+
+	gtk_widget_show_all(GTK_WIDGET(m_apps_scroll));
+	gtk_widget_show_all(GTK_WIDGET(m_letters_scroll));
+
 	connect(m_apps_list, "row-activated",
 		[this](GtkListBox*, GtkListBoxRow* row)
 		{
 			Launcher* launcher = static_cast<Launcher*>(g_object_get_data(G_OBJECT(row), "launcher"));
 			if (!launcher)
 			{
+				const gunichar letter = GPOINTER_TO_UINT(g_object_get_data(G_OBJECT(row), "letter"));
+				if (letter)
+				{
+					show_letter_grid();
+				}
 				return;
 			}
 			m_recent->add(launcher);
 			hide();
 			launcher->run(gtk_widget_get_screen(GTK_WIDGET(m_window)));
+		});
+
+	connect(m_apps_list, "button-press-event",
+		[this](GtkWidget* widget, GdkEvent* event) -> gboolean
+		{
+			GdkEventButton* button = reinterpret_cast<GdkEventButton*>(event);
+			if (button->button == 1)
+			{
+				// Section headers open the letter picker.
+				GtkListBoxRow* row = gtk_list_box_get_row_at_y(m_apps_list, static_cast<gint>(button->y));
+				if (row && g_object_get_data(G_OBJECT(row), "letter"))
+				{
+					show_letter_grid();
+					return GDK_EVENT_STOP;
+				}
+				return GDK_EVENT_PROPAGATE;
+			}
+			return show_app_context_menu(widget, event);
+		});
+
+	connect(m_apps_list, "popup-menu",
+		[this](GtkWidget* widget) -> gboolean
+		{
+			return show_app_context_menu(widget, nullptr);
+		});
+
+	connect(m_apps_list, "key-press-event",
+		[this](GtkWidget* widget, GdkEvent* event) -> gboolean
+		{
+			return on_key_press_event(widget, reinterpret_cast<GdkEventKey*>(event));
 		});
 
 	// Create box for packing categories horizontally (kept for compatibility, hidden)
@@ -483,6 +552,29 @@ WhiskerMenu::Window::Window(Plugin* plugin) :
 		"  font-size: 14px;"
 		"  opacity: 1.0;"
 		"}"
+		"#whiskermenu-window .whiskermenu-apps row.app-empty label {"
+		"  color: rgba(255,255,255,0.65);"
+		"}"
+		"#whiskermenu-window .whiskermenu-letters,"
+		"#whiskermenu-window .whiskermenu-letters viewport,"
+		"#whiskermenu-window .whiskermenu-letters flowbox {"
+		"  background-color: transparent;"
+		"}"
+		"#whiskermenu-window .whiskermenu-letters button {"
+		"  background-color: rgba(255,255,255,0.08);"
+		"  background-image: none;"
+		"  border-style: none;"
+		"  border-radius: 4px;"
+		"  color: #ffffff;"
+		"  font-size: 16px;"
+		"  padding: 10px 0;"
+		"}"
+		"#whiskermenu-window .whiskermenu-letters button:hover {"
+		"  background-color: rgba(255,255,255,0.18);"
+		"}"
+		"#whiskermenu-window .whiskermenu-letters button:active {"
+		"  background-color: rgba(255,255,255,0.26);"
+		"}"
 		"#whiskermenu-window .whiskermenu-strip button {"
 		"  background-color: transparent;"
 		"  background-image: none;"
@@ -595,11 +687,26 @@ void WhiskerMenu::Window::build_app_list()
 	GList* rows = gtk_container_get_children(GTK_CONTAINER(m_apps_list));
 	g_list_free_full(rows, (GDestroyNotify)gtk_widget_destroy);
 
+	const bool filtering = !m_filter_text.empty();
+	Query query;
+	if (filtering)
+	{
+		query.set(m_filter_text);
+	}
+
 	// Add applications grouped by their first letter
 	const int row_gap = wm_settings->app_row_spacing;
 	gunichar last_group = 0;
+	bool added_application = false;
+	std::vector<gunichar> groups;
 	for (Launcher* launcher : m_applications->find_all())
 	{
+		// Type-to-filter uses the same fuzzy matcher as the stock search page.
+		if (filtering && launcher->search(query) == UINT_MAX)
+		{
+			continue;
+		}
+
 		// Use the plain display name: get_text() starts with an invisible
 		// direction mark and may contain markup escapes.
 		const gchar* name = launcher->get_display_name();
@@ -618,6 +725,7 @@ void WhiskerMenu::Window::build_app_list()
 		if (group != last_group)
 		{
 			last_group = group;
+			groups.push_back(group);
 
 			gchar letter[8] = {0};
 			const gint length = g_unichar_to_utf8(group, letter);
@@ -634,6 +742,18 @@ void WhiskerMenu::Window::build_app_list()
 			gtk_container_add(GTK_CONTAINER(row), label);
 			gtk_list_box_row_set_selectable(GTK_LIST_BOX_ROW(row), false);
 			gtk_list_box_row_set_activatable(GTK_LIST_BOX_ROW(row), false);
+			g_object_set_data(G_OBJECT(row), "letter", GUINT_TO_POINTER(group));
+			connect(row, "button-press-event",
+				[this](GtkWidget*, GdkEvent* event) -> gboolean
+				{
+					GdkEventButton* button = reinterpret_cast<GdkEventButton*>(event);
+					if (button->button == 1)
+					{
+						show_letter_grid();
+						return GDK_EVENT_STOP;
+					}
+					return GDK_EVENT_PROPAGATE;
+				});
 			gtk_list_box_insert(m_apps_list, row, -1);
 		}
 
@@ -662,12 +782,211 @@ void WhiskerMenu::Window::build_app_list()
 		gtk_widget_set_tooltip_markup(row, launcher->get_tooltip());
 		g_object_set_data(G_OBJECT(row), "launcher", launcher);
 		gtk_list_box_insert(m_apps_list, row, -1);
+		added_application = true;
 	}
+
+	if (filtering && !added_application)
+	{
+		GtkWidget* row = gtk_list_box_row_new();
+		GtkWidget* label = gtk_label_new(_("No applications found"));
+		gtk_label_set_xalign(GTK_LABEL(label), 0.0f);
+		gtk_widget_set_margin_start(label, 16);
+		gtk_widget_set_margin_end(label, 12);
+		gtk_widget_set_margin_top(label, 14);
+		gtk_widget_set_margin_bottom(label, 14);
+		gtk_style_context_add_class(gtk_widget_get_style_context(row), "app-empty");
+		gtk_container_add(GTK_CONTAINER(row), label);
+		gtk_list_box_row_set_selectable(GTK_LIST_BOX_ROW(row), false);
+		gtk_list_box_row_set_activatable(GTK_LIST_BOX_ROW(row), false);
+		gtk_list_box_insert(m_apps_list, row, -1);
+	}
+
+	build_letter_grid(groups);
 
 	gtk_widget_show_all(GTK_WIDGET(m_apps_list));
 
 	GtkAdjustment* adjustment = gtk_scrolled_window_get_vadjustment(m_apps_scroll);
 	gtk_adjustment_set_value(adjustment, gtk_adjustment_get_lower(adjustment));
+}
+
+//-----------------------------------------------------------------------------
+
+void WhiskerMenu::Window::build_letter_grid(const std::vector<gunichar>& groups)
+{
+	GList* children = gtk_container_get_children(GTK_CONTAINER(m_letters_grid));
+	g_list_free_full(children, (GDestroyNotify)gtk_widget_destroy);
+
+	for (gunichar group : groups)
+	{
+		gchar letter[8] = {0};
+		const gint length = g_unichar_to_utf8(group, letter);
+		letter[length] = 0;
+
+		GtkWidget* button = gtk_button_new_with_label(letter);
+		gtk_widget_set_size_request(button, 72, 48);
+		gtk_style_context_add_class(gtk_widget_get_style_context(button), "letter-button");
+		connect(button, "clicked",
+			[this, group](GtkButton*)
+			{
+				scroll_to_letter(group);
+			});
+		gtk_flow_box_insert(m_letters_grid, button, -1);
+	}
+
+	gtk_widget_show_all(GTK_WIDGET(m_letters_grid));
+}
+
+//-----------------------------------------------------------------------------
+
+void WhiskerMenu::Window::show_letter_grid()
+{
+	gtk_stack_set_visible_child_name(m_apps_stack, "letters");
+
+	GList* children = gtk_container_get_children(GTK_CONTAINER(m_letters_grid));
+	if (children)
+	{
+		gtk_widget_grab_focus(GTK_WIDGET(children->data));
+	}
+	g_list_free(children);
+}
+
+//-----------------------------------------------------------------------------
+
+void WhiskerMenu::Window::scroll_to_letter(gunichar letter)
+{
+	m_scroll_letter = letter;
+	gtk_stack_set_visible_child_name(m_apps_stack, "list");
+	gtk_widget_grab_focus(GTK_WIDGET(m_apps_list));
+
+	g_idle_add(
+		[](gpointer data) -> gboolean
+		{
+			static_cast<Window*>(data)->scroll_to_letter_idle();
+			return G_SOURCE_REMOVE;
+		},
+		this);
+}
+
+//-----------------------------------------------------------------------------
+
+void WhiskerMenu::Window::scroll_to_letter_idle()
+{
+	GList* rows = gtk_container_get_children(GTK_CONTAINER(m_apps_list));
+	for (GList* li = rows; li; li = li->next)
+	{
+		GtkWidget* row = GTK_WIDGET(li->data);
+		const gunichar group = GPOINTER_TO_UINT(g_object_get_data(G_OBJECT(row), "letter"));
+		if (group != m_scroll_letter)
+		{
+			continue;
+		}
+
+		GtkAllocation allocation;
+		gtk_widget_get_allocation(row, &allocation);
+		GtkAdjustment* adjustment = gtk_scrolled_window_get_vadjustment(m_apps_scroll);
+		gtk_adjustment_set_value(adjustment, allocation.y);
+		break;
+	}
+	g_list_free(rows);
+}
+
+//-----------------------------------------------------------------------------
+
+gboolean WhiskerMenu::Window::show_app_context_menu(GtkWidget* widget, GdkEvent* event)
+{
+	GtkListBoxRow* row = nullptr;
+	if (event)
+	{
+		if (event->type != GDK_BUTTON_PRESS)
+		{
+			return GDK_EVENT_PROPAGATE;
+		}
+		GdkEventButton* button = reinterpret_cast<GdkEventButton*>(event);
+		if (button->button != 3)
+		{
+			return GDK_EVENT_PROPAGATE;
+		}
+		row = gtk_list_box_get_row_at_y(m_apps_list, static_cast<gint>(button->y));
+	}
+	else
+	{
+		row = gtk_list_box_get_selected_row(m_apps_list);
+	}
+
+	if (!row)
+	{
+		return GDK_EVENT_PROPAGATE;
+	}
+
+	Launcher* launcher = static_cast<Launcher*>(g_object_get_data(G_OBJECT(row), "launcher"));
+	if (!launcher)
+	{
+		return GDK_EVENT_PROPAGATE;
+	}
+
+	gtk_list_box_select_row(m_apps_list, row);
+	m_applications->show_context_menu(launcher, widget, event);
+	return GDK_EVENT_STOP;
+}
+
+//-----------------------------------------------------------------------------
+
+void WhiskerMenu::Window::clear_filter()
+{
+	if (m_filter_text.empty())
+	{
+		return;
+	}
+
+	m_filter_text.clear();
+	if (m_apps_stack)
+	{
+		gtk_stack_set_visible_child_name(m_apps_stack, "list");
+	}
+	build_app_list();
+	gtk_widget_grab_focus(GTK_WIDGET(m_apps_list));
+}
+
+//-----------------------------------------------------------------------------
+
+void WhiskerMenu::Window::append_filter(gunichar character)
+{
+	gchar text[8] = {0};
+	const gint length = g_unichar_to_utf8(character, text);
+	text[length] = 0;
+	m_filter_text += text;
+
+	if (m_apps_stack)
+	{
+		gtk_stack_set_visible_child_name(m_apps_stack, "list");
+	}
+	build_app_list();
+	gtk_widget_grab_focus(GTK_WIDGET(m_apps_list));
+}
+
+//-----------------------------------------------------------------------------
+
+void WhiskerMenu::Window::remove_filter_character()
+{
+	if (m_filter_text.empty())
+	{
+		return;
+	}
+
+	size_t position = m_filter_text.size();
+	do
+	{
+		--position;
+	}
+	while (position > 0 && (static_cast<unsigned char>(m_filter_text[position]) & 0xC0) == 0x80);
+	m_filter_text.erase(position);
+
+	if (m_apps_stack)
+	{
+		gtk_stack_set_visible_child_name(m_apps_stack, "list");
+	}
+	build_app_list();
+	gtk_widget_grab_focus(GTK_WIDGET(m_apps_list));
 }
 
 //-----------------------------------------------------------------------------
@@ -718,6 +1037,13 @@ void WhiskerMenu::Window::hide(bool lost_focus)
 	wm_settings->favorites.save();
 	wm_settings->recent.save();
 
+	// Clear the invisible type-to-filter state
+	m_filter_text.clear();
+	if (m_apps_stack)
+	{
+		gtk_stack_set_visible_child_name(m_apps_stack, "list");
+	}
+
 	// Hide window
 	gtk_widget_hide(GTK_WIDGET(m_window));
 
@@ -736,6 +1062,13 @@ void WhiskerMenu::Window::hide(bool lost_focus)
 void WhiskerMenu::Window::show(const Position position)
 {
 	m_position = position;
+
+	// Start each session with an unfiltered list.
+	m_filter_text.clear();
+	if (m_apps_stack)
+	{
+		gtk_stack_set_visible_child_name(m_apps_stack, "list");
+	}
 
 	// Handle switching view types
 	m_search_results->update_view();
@@ -1054,6 +1387,7 @@ GtkWidget* WhiskerMenu::Window::get_active_category_button()
 
 gboolean WhiskerMenu::Window::on_key_press_event(GtkWidget* widget, GdkEventKey* key_event)
 {
+	// The search entry is hidden in the Aero layout; typing filters the list.
 	if (key_event->keyval == GDK_KEY_Escape)
 	{
 		// Cancel resize
@@ -1066,10 +1400,43 @@ gboolean WhiskerMenu::Window::on_key_press_event(GtkWidget* widget, GdkEventKey*
 			set_size(wm_settings->menu_width, wm_settings->menu_height);
 			resize_end();
 		}
+		else if (g_strcmp0(gtk_stack_get_visible_child_name(m_apps_stack), "letters") == 0)
+		{
+			gtk_stack_set_visible_child_name(m_apps_stack, "list");
+			gtk_widget_grab_focus(GTK_WIDGET(m_apps_list));
+		}
+		else if (!m_filter_text.empty())
+		{
+			clear_filter();
+		}
 		else
 		{
 			hide();
 		}
+		return GDK_EVENT_STOP;
+	}
+
+	if (key_event->keyval == GDK_KEY_BackSpace)
+	{
+		if (!m_filter_text.empty())
+		{
+			remove_filter_character();
+			return GDK_EVENT_STOP;
+		}
+		return GDK_EVENT_PROPAGATE;
+	}
+
+	// Do not steal shortcuts or navigation keys.
+	const guint modifiers = key_event->state & (GDK_CONTROL_MASK | GDK_MOD1_MASK | GDK_SUPER_MASK | GDK_META_MASK | GDK_HYPER_MASK);
+	if (modifiers)
+	{
+		return GDK_EVENT_PROPAGATE;
+	}
+
+	const gunichar character = gdk_keyval_to_unicode(key_event->keyval);
+	if (character && g_unichar_isprint(character))
+	{
+		append_filter(character);
 		return GDK_EVENT_STOP;
 	}
 

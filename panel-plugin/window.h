@@ -18,6 +18,7 @@
 #ifndef WHISKERMENU_WINDOW_H
 #define WHISKERMENU_WINDOW_H
 
+#include <string>
 #include <vector>
 
 #include <gtk/gtk.h>
@@ -94,6 +95,14 @@ public:
 private:
 	GtkWidget* get_active_category_button();
 	void build_app_list();
+	void build_letter_grid(const std::vector<gunichar>& groups);
+	void show_letter_grid();
+	void scroll_to_letter(gunichar letter);
+	void scroll_to_letter_idle();
+	gboolean show_app_context_menu(GtkWidget* widget, GdkEvent* event);
+	void clear_filter();
+	void append_filter(gunichar character);
+	void remove_filter_character();
 	void open_user_directory(GUserDirectory directory, const gchar* fallback_name);
 	void add_strip_button(GtkWidget* button);
 	gboolean on_key_press_event(GtkWidget* widget, GdkEventKey* key_event);
@@ -145,8 +154,13 @@ private:
 	GtkEntry* m_search_entry;
 
 	GtkBox* m_sidebar_strip;
+	GtkStack* m_apps_stack;
 	GtkScrolledWindow* m_apps_scroll;
 	GtkListBox* m_apps_list;
+	GtkScrolledWindow* m_letters_scroll;
+	GtkFlowBox* m_letters_grid;
+	std::string m_filter_text;
+	gunichar m_scroll_letter;
 
 	SearchPage* m_search_results;
 	FavoritesPage* m_favorites;

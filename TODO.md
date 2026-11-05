@@ -23,15 +23,20 @@
       (`install.sh`) with no root required.
 - [x] Verified live: user-local `.so` loaded by the panel, 0.8 background,
       pure white text, three columns visible, list populated and scrollable.
+- [x] Invisible type-to-filter using the stock search matcher; Backspace
+      removes a character, Escape clears the filter before closing.
+- [x] Right-click context menu on custom application rows, including
+      Pin to Start / Unpin from Start, plus the stock desktop/panel/autostart/
+      edit/hide actions.
+- [x] Letter picker: clicking a section header replaces the list with a grid
+      of available letters; clicking a letter returns to the list scrolled to
+      that section.
 
 ## Remaining / optional
 
 - [ ] Remove or disable upstream layout options in the settings dialog that no
       longer affect the fixed three-column layout.
-- [ ] Add the upstream right-click context menu to the custom application list
-      (Add to Favorites / Desktop / Panel / Autostart, edit, hide).
-- [ ] Decide whether to reintroduce search (e.g. type-to-filter in the app
-      list) or keep the menu browse-only.
+- [ ] Optional: make the typed filter visible once a place for it is chosen.
 - [ ] Optional visual polish: separate tint for the left strip, hover states
       for the letter headers, scrollbar styling.
 
