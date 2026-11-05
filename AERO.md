@@ -105,10 +105,12 @@ Opening the menu unrolls it vertically from the bottom edge upward. The visible
 height follows:
 
 ```text
-height(t) = full_height * (10*t - 25*t^2)     t = 0 .. 0.2 s
+height(t) = full_height * (1 - 0.16247 * 0.0000000771311^t)
+              t = 0 .. 0.999537 s
 ```
 
-The curve reaches full height at 0.2 s and has zero velocity there. The menu
+The curve starts at 83.753% of the full height at `t = 0`, reaches the full
+height at the end of the interval, and then stays there. The menu
 contents sit in a bottom-anchored container that is allocated the animated
 height, so rows and panels reflow as the menu grows rather than being revealed
 under a fixed mask. An X11 window shape clips the part that has not appeared

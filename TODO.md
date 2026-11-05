@@ -32,7 +32,8 @@
       of available letters; clicking a letter returns to the list scrolled to
       that section.
 - [x] Vertical opening animation from bottom to top using
-      `height(t) = full_height * (10t - 25t^2)` for t = 0..0.2 s.
+      `height(t) = full_height * (1 - 0.16247 * 0.0000000771311^t)`
+      for t = 0..0.999537 s.
 
 ## Remaining / optional
 

@@ -46,6 +46,7 @@
 #endif
 
 #include <climits>
+#include <cmath>
 #include <ctime>
 
 using namespace WhiskerMenu;
@@ -1168,8 +1169,9 @@ void WhiskerMenu::Window::apply_slide_height(double elapsed)
 		return;
 	}
 
-	// height(t) = full_height * (10t - 25t^2), for t in [0, 0.2].
-	static constexpr double duration = 0.2;
+	// height(t) = full_height * (1 - 0.16247 * 0.0000000771311^t),
+	// for t in [0, 0.999537].
+	static constexpr double duration = 0.999537;
 	if (elapsed >= duration)
 	{
 		if (m_slide_container)
@@ -1180,7 +1182,7 @@ void WhiskerMenu::Window::apply_slide_height(double elapsed)
 	}
 	else
 	{
-		const double fraction = CLAMP(10.0 * elapsed - 25.0 * elapsed * elapsed, 0.0, 1.0);
+		const double fraction = 1.0 - 0.16247 * std::pow(0.0000000771311, elapsed);
 		int visible_height = static_cast<int>(full_height * fraction + 0.5);
 		visible_height = CLAMP(visible_height, 0, full_height);
 
@@ -1203,7 +1205,7 @@ void WhiskerMenu::Window::apply_slide_height(double elapsed)
 
 gboolean WhiskerMenu::Window::on_slide_animation_tick()
 {
-	static constexpr double duration = 0.2;
+	static constexpr double duration = 0.999537;
 	const double elapsed = (g_get_monotonic_time() - m_slide_start) / 1000000.0;
 
 	apply_slide_height(elapsed);
@@ -1444,8 +1446,8 @@ void WhiskerMenu::Window::show(const Position position)
 	// Show window
 	gtk_window_present(m_window);
 
-	// Hide the first frame behind an empty shape so opening never flashes the
-	// full menu before the animation starts.
+	// Apply the initial partial height before the animation starts so opening
+	// never flashes the full menu.
 	apply_slide_height(0.0);
 
 	if (resized)
