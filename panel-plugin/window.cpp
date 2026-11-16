@@ -690,6 +690,16 @@ WhiskerMenu::Window::Window(Plugin* plugin) :
 		"}"
 		"#whiskermenu-window .whiskermenu-strip button:active {"
 		"  background-color: rgba(255,255,255,0.20);"
+		"}"
+		".whiskermenu-context-menu menuitem {"
+		"  color: #000000;"
+		"  background-color: rgba(255,255,255,0.95);"
+		"}"
+		".whiskermenu-context-menu menuitem:selected {"
+		"  background-color: rgba(255,255,255,1.0);"
+		"}"
+		".whiskermenu-context-menu menuitem label {"
+		"  color: #000000;"
 		"}",
 		-1, nullptr);
 	gtk_style_context_add_provider_for_screen(gtk_widget_get_screen(GTK_WIDGET(m_window)),

@@ -431,6 +431,8 @@ void Page::show_context_menu(Launcher* launcher, GtkWidget* anchor, GdkEvent* ev
 
 	// Create context menu
 	GtkWidget* menu = gtk_menu_new();
+	gtk_style_context_add_class(gtk_widget_get_style_context(menu),
+		"whiskermenu-context-menu");
 	connect(menu, "selection-done",
 		[this](GtkMenuShell* menushell)
 		{
