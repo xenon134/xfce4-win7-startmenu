@@ -1302,6 +1302,7 @@ void WhiskerMenu::Window::add_strip_button(GtkWidget* button)
 	gtk_widget_set_halign(button, GTK_ALIGN_CENTER);
 	gtk_widget_set_valign(button, GTK_ALIGN_CENTER);
 	gtk_widget_set_size_request(button, 48, 48);
+	gtk_widget_set_can_focus(button, false);
 	gtk_style_context_add_class(gtk_widget_get_style_context(button), "strip-button");
 }
 
@@ -1492,8 +1493,33 @@ void WhiskerMenu::Window::show(const Position position)
 	// Show window
 	gtk_window_present(m_window);
 
-	// Put keyboard focus on the application list by default.
-	gtk_widget_grab_focus(GTK_WIDGET(m_apps_list));
+	// Put keyboard focus on the application list by default. Defer until GTK
+	// has settled so the focus grab isn't overridden by window presentation.
+	g_idle_add(
+		+[](gpointer data) -> gboolean
+		{
+			Window* self = static_cast<Window*>(data);
+			GtkWidget* list = GTK_WIDGET(self->m_apps_list);
+			gtk_widget_grab_focus(list);
+
+			// Select and focus the first activatable row so Enter opens it.
+			GList* children = gtk_container_get_children(GTK_CONTAINER(self->m_apps_list));
+			for (GList* iter = children; iter; iter = iter->next)
+			{
+				GtkWidget* row = GTK_WIDGET(iter->data);
+				if (GTK_IS_LIST_BOX_ROW(row)
+						&& gtk_list_box_row_get_activatable(GTK_LIST_BOX_ROW(row)))
+				{
+					gtk_list_box_select_row(GTK_LIST_BOX(self->m_apps_list),
+							GTK_LIST_BOX_ROW(row));
+					gtk_widget_grab_focus(row);
+					break;
+				}
+			}
+			g_list_free(children);
+			return G_SOURCE_REMOVE;
+		},
+		this);
 
 	// Apply the initial partial height before the animation starts so opening
 	// never flashes the full menu.
