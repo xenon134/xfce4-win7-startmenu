@@ -45,6 +45,7 @@
 #include <gdk/gdkx.h>
 #endif
 
+#include <algorithm>
 #include <climits>
 #include <cmath>
 #include <ctime>
@@ -798,67 +799,44 @@ void WhiskerMenu::Window::build_app_list()
 		query.set(m_filter_text);
 	}
 
-	// Add applications grouped by their first letter
+	// Add applications. When type-filtering, rank matches so title matches
+	// come first, followed by description/path/keyword/command matches.
 	const int row_gap = wm_settings->app_row_spacing;
-	gunichar last_group = 0;
 	bool added_application = false;
 	std::vector<gunichar> groups;
-	for (Launcher* launcher : m_applications->find_all())
-	{
-		// Type-to-filter uses the same fuzzy matcher as the stock search page.
-		if (filtering && launcher->search(query) == UINT_MAX)
-		{
-			continue;
-		}
 
+	// When filtering, collect and rank the matches by search score. Lower
+	// scores rank higher: name matches (0x4xx) before generic name (0x8xx),
+	// comment (0x10xx), keywords (0x20xx) and command (0x40xx).
+	std::vector<std::pair<unsigned int, Launcher*>> ranked;
+	if (filtering)
+	{
+		for (Launcher* launcher : m_applications->find_all())
+		{
+			const unsigned int score = launcher->search(query);
+			if (score != UINT_MAX)
+			{
+				ranked.emplace_back(score, launcher);
+			}
+		}
+		std::stable_sort(ranked.begin(), ranked.end(),
+			[](const std::pair<unsigned int, Launcher*>& left,
+			    const std::pair<unsigned int, Launcher*>& right)
+			{
+				return left.first < right.first;
+			});
+	}
+
+	// Add a single application row (image + label). No section header is
+	// added here; that is handled separately for the unfiltered list.
+	auto add_application_row = [&](Launcher* launcher) -> void
+	{
 		// Use the plain display name: get_text() starts with an invisible
 		// direction mark and may contain markup escapes.
 		const gchar* name = launcher->get_display_name();
 		if (!name || !*name)
 		{
-			continue;
-		}
-
-		const gunichar first = g_utf8_get_char(name);
-		gunichar group = g_unichar_toupper(first);
-		if (!g_unichar_isalpha(group))
-		{
-			group = '#';
-		}
-
-		if (group != last_group)
-		{
-			last_group = group;
-			groups.push_back(group);
-
-			gchar letter[8] = {0};
-			const gint length = g_unichar_to_utf8(group, letter);
-			letter[length] = 0;
-
-			GtkWidget* row = gtk_list_box_row_new();
-			GtkWidget* label = gtk_label_new(letter);
-			gtk_label_set_xalign(GTK_LABEL(label), 0.0f);
-			gtk_widget_set_margin_start(label, 16);
-			gtk_widget_set_margin_end(label, 12);
-			gtk_widget_set_margin_top(label, 14);
-			gtk_widget_set_margin_bottom(label, 4);
-			gtk_style_context_add_class(gtk_widget_get_style_context(label), "app-section");
-			gtk_container_add(GTK_CONTAINER(row), label);
-			gtk_list_box_row_set_selectable(GTK_LIST_BOX_ROW(row), false);
-			gtk_list_box_row_set_activatable(GTK_LIST_BOX_ROW(row), false);
-			g_object_set_data(G_OBJECT(row), "letter", GUINT_TO_POINTER(group));
-			connect(row, "button-press-event",
-				[this](GtkWidget*, GdkEvent* event) -> gboolean
-				{
-					GdkEventButton* button = reinterpret_cast<GdkEventButton*>(event);
-					if (button->button == 1)
-					{
-						show_letter_grid();
-						return GDK_EVENT_STOP;
-					}
-					return GDK_EVENT_PROPAGATE;
-				});
-			gtk_list_box_insert(m_apps_list, row, -1);
+			return;
 		}
 
 		GtkWidget* row = gtk_list_box_row_new();
@@ -887,6 +865,74 @@ void WhiskerMenu::Window::build_app_list()
 		g_object_set_data(G_OBJECT(row), "launcher", launcher);
 		gtk_list_box_insert(m_apps_list, row, -1);
 		added_application = true;
+	};
+
+	if (filtering)
+	{
+		// Flat, score-ranked list: title matches first.
+		for (const auto& entry : ranked)
+		{
+			add_application_row(entry.second);
+		}
+	}
+	else
+	{
+		// Add applications grouped by their first letter.
+		gunichar last_group = 0;
+		for (Launcher* launcher : m_applications->find_all())
+		{
+			// Use the plain display name: get_text() starts with an invisible
+			// direction mark and may contain markup escapes.
+			const gchar* name = launcher->get_display_name();
+			if (!name || !*name)
+			{
+				continue;
+			}
+
+			const gunichar first = g_utf8_get_char(name);
+			gunichar group = g_unichar_toupper(first);
+			if (!g_unichar_isalpha(group))
+			{
+				group = '#';
+			}
+
+			if (group != last_group)
+			{
+				last_group = group;
+				groups.push_back(group);
+
+				gchar letter[8] = {0};
+				const gint length = g_unichar_to_utf8(group, letter);
+				letter[length] = 0;
+
+				GtkWidget* row = gtk_list_box_row_new();
+				GtkWidget* label = gtk_label_new(letter);
+				gtk_label_set_xalign(GTK_LABEL(label), 0.0f);
+				gtk_widget_set_margin_start(label, 16);
+				gtk_widget_set_margin_end(label, 12);
+				gtk_widget_set_margin_top(label, 14);
+				gtk_widget_set_margin_bottom(label, 4);
+				gtk_style_context_add_class(gtk_widget_get_style_context(label), "app-section");
+				gtk_container_add(GTK_CONTAINER(row), label);
+				gtk_list_box_row_set_selectable(GTK_LIST_BOX_ROW(row), false);
+				gtk_list_box_row_set_activatable(GTK_LIST_BOX_ROW(row), false);
+				g_object_set_data(G_OBJECT(row), "letter", GUINT_TO_POINTER(group));
+				connect(row, "button-press-event",
+					[this](GtkWidget*, GdkEvent* event) -> gboolean
+					{
+						GdkEventButton* button = reinterpret_cast<GdkEventButton*>(event);
+						if (button->button == 1)
+						{
+							show_letter_grid();
+							return GDK_EVENT_STOP;
+						}
+						return GDK_EVENT_PROPAGATE;
+					});
+				gtk_list_box_insert(m_apps_list, row, -1);
+			}
+
+			add_application_row(launcher);
+		}
 	}
 
 	if (filtering && !added_application)
@@ -1445,6 +1491,9 @@ void WhiskerMenu::Window::show(const Position position)
 
 	// Show window
 	gtk_window_present(m_window);
+
+	// Put keyboard focus on the application list by default.
+	gtk_widget_grab_focus(GTK_WIDGET(m_apps_list));
 
 	// Apply the initial partial height before the animation starts so opening
 	// never flashes the full menu.
