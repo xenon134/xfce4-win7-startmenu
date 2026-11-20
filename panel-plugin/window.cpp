@@ -963,6 +963,26 @@ void WhiskerMenu::Window::build_app_list()
 
 	gtk_widget_show_all(GTK_WIDGET(m_apps_list));
 
+	// When filtering, select and focus the first activatable row so Enter
+	// opens the topmost search result.
+	if (filtering)
+	{
+		GList* children = gtk_container_get_children(GTK_CONTAINER(m_apps_list));
+		for (GList* iter = children; iter; iter = iter->next)
+		{
+			GtkWidget* row = GTK_WIDGET(iter->data);
+			if (GTK_IS_LIST_BOX_ROW(row)
+					&& gtk_list_box_row_get_activatable(GTK_LIST_BOX_ROW(row)))
+			{
+				gtk_list_box_select_row(GTK_LIST_BOX(m_apps_list),
+						GTK_LIST_BOX_ROW(row));
+				gtk_widget_grab_focus(row);
+				break;
+			}
+		}
+		g_list_free(children);
+	}
+
 	GtkAdjustment* adjustment = gtk_scrolled_window_get_vadjustment(m_apps_scroll);
 	gtk_adjustment_set_value(adjustment, gtk_adjustment_get_lower(adjustment));
 }
